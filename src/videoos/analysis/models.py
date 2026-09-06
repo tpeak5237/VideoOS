@@ -98,14 +98,35 @@ class SpeechRegion(AnalysisModel):
         return self
 
 
+class TranscriptWord(AnalysisModel):
+    """A word recognized by a local speech provider with source-media timings."""
+
+    text: str
+    start: float
+    end: float
+
+    @field_validator("start", "end")
+    @classmethod
+    def validate_timestamp(cls, value: float, info: object) -> float:
+        return _finite_non_negative(value, getattr(info, "field_name", "timestamp"))
+
+    @model_validator(mode="after")
+    def validate_range(self) -> TranscriptWord:
+        if self.end < self.start:
+            raise ValueError("end must be greater than or equal to start")
+        return self
+
+
 class Transcript(AnalysisModel):
-    provider: str
+    provider: str = "unknown"
     regions: list[SpeechRegion] = Field(default_factory=list)
+    words: list[TranscriptWord] = Field(default_factory=list)
 
 
 class CapabilityStatus(AnalysisModel):
     name: str
     available: bool
+    reason: str | None = None
     warning: str | None = None
 
 
