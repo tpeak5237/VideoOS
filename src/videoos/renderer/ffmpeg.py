@@ -20,6 +20,7 @@ _ALLOWED_VIDEO_CODECS = frozenset({"libx264", "h264_videotoolbox"})
 _ALLOWED_CAPTION_SUFFIXES = frozenset({".ass", ".srt"})
 _MAX_ZOOM_SCALE = 1.25
 _MAX_DIAGNOSTIC_CHARS = 512
+_LOUDNORM_FILTER = "loudnorm=I=-16:TP=-1.5:LRA=11"
 
 
 def _number(value: float) -> str:
@@ -52,7 +53,7 @@ def _video_chain(operation: RenderOperation, target: TargetSpec) -> str:
     if transform is not None and transform.zoom_scale is not None:
         zoom = min(transform.zoom_scale, _MAX_ZOOM_SCALE)
         filters.append(
-            f"zoompan=z='min({_number(zoom)},zoom+0.0)':d=1:s={target.width}x{target.height}"
+            f"zoompan=z='min({_number(zoom)},zoom+0.0)':d=1:s={target.width}x{target.height}:fps=30"
         )
     return ",".join(filters)
 
@@ -86,7 +87,8 @@ def build_filter_graph(
             inputs.append(f"[{audio_label}]")
 
     if include_audio:
-        chains.append(f"{''.join(inputs)}concat=n={len(operations)}:v=1:a=1[vconcat][aout]")
+        chains.append(f"{''.join(inputs)}concat=n={len(operations)}:v=1:a=1[vconcat][anormalized]")
+        chains.append(f"[anormalized]{_LOUDNORM_FILTER}[aout]")
     else:
         chains.append(f"{''.join(inputs)}concat=n={len(operations)}:v=1:a=0[vconcat]")
 
@@ -169,8 +171,8 @@ def _compile_argv(
         argv.extend(("-map", "[aout]"))
     argv.extend(("-c:v", video_codec, "-pix_fmt", "yuv420p"))
     if has_audio:
-        argv.extend(("-c:a", "aac", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11"))
-    argv.extend(("-movflags", "+faststart", str(temp_output)))
+        argv.extend(("-c:a", "aac"))
+    argv.extend(("-movflags", "+faststart", "-f", "mp4", str(temp_output)))
     return tuple(argv)
 
 
