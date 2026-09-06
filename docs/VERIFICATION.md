@@ -61,6 +61,107 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/videoos qa /tmp/videoos-fixture.videoos/rend
 | Render | `/private/tmp/videoos-fixture.videoos/renders/videoos-fixture.mp4` | SHA-256 `c9940a33ecc39ac0a8ca84327b39b50e37737774706e6f6b54ca21663a569fe7` before and after dry-run. |
 | QA report | `/private/tmp/videoos-fixture.videoos/renders/videoos-fixture.qa.json` | Valid JSON; `passed: true`; no sibling atomic-write temporary file remained. |
 
+## Reproducible local artifact inspection
+
+The following checks were run locally at `2026-09-06T22:54:37+07:00`. They are `TESTED` evidence for the listed generated fixture only; they do not establish `DEPLOYED` or `VERIFIED LIVE` status.
+
+```sh
+export PYTHONDONTWRITEBYTECODE=1
+printf 'source_before '
+shasum -a 256 /tmp/videoos-fixture.mp4
+stat -f 'source_before mtime=%m size=%z' /tmp/videoos-fixture.mp4
+.venv/bin/videoos render /tmp/videoos-fixture.videoos/project.json --dry-run
+.venv/bin/videoos qa /tmp/videoos-fixture.videoos/renders/videoos-fixture.mp4 --timeline /tmp/videoos-fixture.videoos/timeline.json --json
+printf 'source_after '
+shasum -a 256 /tmp/videoos-fixture.mp4
+stat -f 'source_after mtime=%m size=%z' /tmp/videoos-fixture.mp4
+```
+
+Observed result:
+
+```text
+source_before 55b23f917a1bf92a5424f85b902d2cab30567e0db353d2dd8095e88b54ab2b01  /tmp/videoos-fixture.mp4
+source_before mtime=1788709195 size=42206
+render: dry_run=True; warnings=[]; structured argv/operations plan emitted
+qa: passed=true; 14 checks passed; warnings=[]
+source_after 55b23f917a1bf92a5424f85b902d2cab30567e0db353d2dd8095e88b54ab2b01  /tmp/videoos-fixture.mp4
+source_after mtime=1788709195 size=42206
+```
+
+The source fixture hash, mtime, and size were unchanged by dry-run and QA. The dry-run did not publish an output; QA regenerated only its sibling QA evidence file.
+
+The following read-only Python command verifies strict JSON parsing, the versioned Pydantic model for each artifact, and that every numeric value in each JSON tree is finite:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python - <<'PY'
+import json
+import math
+from pathlib import Path
+
+from videoos.analysis.models import AnalysisArtifact
+from videoos.core.io import load_model
+from videoos.core.models import ProjectManifest, Timeline
+from videoos.qa.models import QAReport
+
+project_dir = Path('/private/tmp/videoos-fixture.videoos')
+artifacts = {
+    'project': (project_dir / 'project.json', ProjectManifest),
+    'timeline': (project_dir / 'timeline.json', Timeline),
+    'analysis': (next((project_dir / 'analysis').glob('*.json')), AnalysisArtifact),
+    'qa': (project_dir / 'renders' / 'videoos-fixture.qa.json', QAReport),
+}
+
+def finite_violations(value, path='$'):
+    if isinstance(value, dict):
+        return [issue for key, item in value.items() for issue in finite_violations(item, f'{path}.{key}')]
+    if isinstance(value, list):
+        return [issue for index, item in enumerate(value) for issue in finite_violations(item, f'{path}[{index}]')]
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and not math.isfinite(value):
+        return [path]
+    return []
+
+for name, (artifact_path, model_type) in artifacts.items():
+    payload = json.loads(artifact_path.read_text(encoding='utf-8'))
+    model = load_model(artifact_path, model_type)
+    violations = finite_violations(payload)
+    print(
+        f'{name}: json_parse=ok model={type(model).__name__} model_validation=ok '
+        f'finite_value_violations={violations}'
+    )
+PY
+```
+
+Observed result:
+
+```text
+project: json_parse=ok model=ProjectManifest model_validation=ok finite_value_violations=[]
+timeline: json_parse=ok model=Timeline model_validation=ok finite_value_violations=[]
+analysis: json_parse=ok model=AnalysisArtifact model_validation=ok finite_value_violations=[]
+qa: json_parse=ok model=QAReport model_validation=ok finite_value_violations=[]
+```
+
+The following local scans inspect persisted artifacts only. The FFmpeg argument vector shown by `render --dry-run` is CLI output, not a shell command or a persisted project value.
+
+```sh
+if rg -n -i '(api[_-]?key|secret|password|authorization|bearer|/bin/(ba)?sh|shell[[:space:]]*=)' /tmp/videoos-fixture.videoos/project.json /tmp/videoos-fixture.videoos/timeline.json /tmp/videoos-fixture.videoos/analysis/*.json /tmp/videoos-fixture.videoos/renders/*.qa.json; then
+  printf 'artifact_safety_scan=matches_found\n'
+  exit 1
+fi
+printf 'artifact_safety_scan=no_secret_or_shell_text_matches\n'
+if find /tmp/videoos-fixture.videoos/renders -maxdepth 1 -name '.videoos-fixture.qa.json.*.tmp' -print | grep -q .; then
+  printf 'qa_temp_file_check=temporary_file_left_behind\n'
+  exit 1
+fi
+printf 'qa_temp_file_check=no_temporary_file_left_behind\n'
+```
+
+Observed result:
+
+```text
+artifact_safety_scan=no_secret_or_shell_text_matches
+qa_temp_file_check=no_temporary_file_left_behind
+```
+
 Inspection commands:
 
 ```sh
