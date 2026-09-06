@@ -81,17 +81,58 @@ class SourceRef(SchemaModel):
 class AnalysisRef(SchemaModel):
     source_id: str
     path: str
-    source_sha256: str
-    analysis_config_fingerprint: str
-    tool_fingerprint: str
+    source_sha256: str | None = None
+    analysis_config_fingerprint: str | None = None
+    tool_fingerprint: str | None = None
+    cache_key: str | None = Field(default=None, max_length=256)
 
     @field_validator("source_sha256", "analysis_config_fingerprint", "tool_fingerprint")
     @classmethod
-    def validate_fingerprint(cls, value: str, info: object) -> str:
+    def validate_fingerprint(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return value
         return _sha256(value, getattr(info, "field_name", "fingerprint"))
 
+    @field_validator("cache_key")
+    @classmethod
+    def validate_legacy_cache_key(cls, value: str | None) -> str | None:
+        if value is not None and not value:
+            raise ValueError("cache_key must be non-empty when present")
+        return value
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> AnalysisRef:
+        modern_fields = (
+            self.source_sha256,
+            self.analysis_config_fingerprint,
+            self.tool_fingerprint,
+        )
+        if self.cache_key is not None:
+            if any(field is not None for field in modern_fields):
+                raise ValueError("legacy cache_key cannot be combined with modern cache identity")
+            return self
+        if not all(field is not None for field in modern_fields):
+            raise ValueError("modern cache identity requires all validated fingerprints")
+        return self
+
     @property
-    def cache_identity(self) -> str:
+    def is_cache_reusable(self) -> bool:
+        return self.cache_key is None and all(
+            field is not None
+            for field in (
+                self.source_sha256,
+                self.analysis_config_fingerprint,
+                self.tool_fingerprint,
+            )
+        )
+
+    @property
+    def cache_identity(self) -> str | None:
+        if not self.is_cache_reusable:
+            return None
+        assert self.source_sha256 is not None
+        assert self.analysis_config_fingerprint is not None
+        assert self.tool_fingerprint is not None
         identity = f"{self.source_sha256}\0{self.analysis_config_fingerprint}\0{self.tool_fingerprint}"
         return hashlib.sha256(identity.encode("ascii")).hexdigest()
 
@@ -177,14 +218,14 @@ class AudioAdjustment(SchemaModel):
 
 class DecisionParameters(SchemaModel):
     silence_seconds: float | None = None
-    scene_index: int | None = Field(default=None, ge=0)
+    scene_index: int | None = Field(default=None, ge=0, le=1_000_000)
 
     @field_validator("silence_seconds")
     @classmethod
     def validate_silence_seconds(cls, value: float | None) -> float | None:
         if value is None:
             return value
-        return _timestamp(value, "silence_seconds")
+        return _finite_in_range(value, "silence_seconds", 0, 600)
 
 
 EvidenceAction = Literal[

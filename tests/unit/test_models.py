@@ -5,6 +5,7 @@ from videoos.core.models import (
     AnalysisRef,
     AudioAdjustment,
     CaptionCue,
+    DecisionParameters,
     Evidence,
     ProjectManifest,
     SourceSegment,
@@ -83,6 +84,28 @@ def test_analysis_ref_has_validated_deterministic_cache_identity():
             analysis_config_fingerprint=SHA256_B,
             tool_fingerprint=SHA256_C,
         )
+
+
+def test_legacy_analysis_ref_loads_but_is_not_cache_reusable():
+    reference = AnalysisRef(source_id="main", path="analysis/main.json", cache_key="old-opaque-key")
+
+    assert reference.cache_key == "old-opaque-key"
+    assert reference.cache_identity is None
+    assert reference.is_cache_reusable is False
+    with pytest.raises(ValidationError, match="modern cache identity"):
+        AnalysisRef(source_id="main", path="analysis/main.json")
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"silence_seconds": 600.1},
+        {"scene_index": 1_000_001},
+    ],
+)
+def test_decision_parameters_reject_over_limit_values(parameters: dict[str, float | int]):
+    with pytest.raises(ValidationError):
+        DecisionParameters(**parameters)
 
 
 def test_manifest_rejects_analysis_reference_for_an_unknown_source():

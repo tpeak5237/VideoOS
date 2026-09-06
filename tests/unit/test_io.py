@@ -50,6 +50,27 @@ def test_load_rejects_future_versions(tmp_path: Path):
         load_model(path, Timeline)
 
 
+def test_loads_legacy_project_analysis_without_granting_cache_reuse(tmp_path: Path):
+    path = tmp_path / "project.json"
+    path.write_text(
+        """{
+          "version": "1",
+          "project_id": "legacy",
+          "name": "Legacy",
+          "sources": [{"id": "main", "path": "sources/main.mp4"}],
+          "target": {"aspect_ratio": "16:9", "resolution": "1920x1080"},
+          "analysis": [{"source_id": "main", "path": "analysis/main.json", "cache_key": "legacy-key"}]
+        }""",
+        encoding="utf-8",
+    )
+
+    legacy = load_model(path, ProjectManifest).analysis[0]
+
+    assert legacy.cache_key == "legacy-key"
+    assert legacy.cache_identity is None
+    assert legacy.is_cache_reusable is False
+
+
 @pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
 def test_load_rejects_non_standard_json_constants(tmp_path: Path, constant: str):
     path = tmp_path / "timeline.json"
