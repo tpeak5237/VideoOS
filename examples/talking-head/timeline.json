@@ -1,0 +1,22 @@
+{
+  "version": "1",
+  "tracks": [
+    {
+      "id": "primary-video",
+      "kind": "video",
+      "segments": [
+        {
+          "source_id": "main",
+          "source_start": 0.0,
+          "source_end": 12.0,
+          "timeline_start": 0.0,
+          "role": "primary",
+          "transform": {"zoom_scale": 1.05},
+          "audio": {"target_lufs": -16.0}
+        }
+      ]
+    }
+  ],
+  "captions": [{"start": 0.0, "end": 2.0, "text": "Replace this example text."}],
+  "removed": []
+}
