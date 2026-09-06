@@ -1,3 +1,5 @@
+import os
+import stat
 from pathlib import Path
 
 from .errors import UnsafePathError
@@ -41,3 +43,46 @@ def ensure_output_path(path: str | Path, *, project_dir: Path | None = None) -> 
     if resolved.exists():
         raise UnsafePathError(f"output path already exists: {resolved}")
     return resolved
+
+
+def publish_staged_output(
+    staged_path: str | Path,
+    destination_path: str | Path,
+    *,
+    project_dir: Path | None = None,
+) -> Path:
+    """Publish a same-directory stage exactly once without following links.
+
+    The destination is created with an exclusive hard-link operation. A target
+    that appears after validation, including a symlink or hard link, therefore
+    causes the atomic operation to fail without replacing it.
+    """
+    project = _resolved_base(project_dir)
+    staged = Path(staged_path)
+    destination = Path(destination_path)
+    staged_parent = staged.parent.resolve(strict=True)
+    destination_parent = destination.parent.resolve(strict=True)
+    if staged_parent != destination_parent or not _is_within(staged_parent, project):
+        raise UnsafePathError("staged and destination paths must share a project directory")
+    if not _is_within(destination_parent / destination.name, project):
+        raise UnsafePathError(f"output path escapes project directory: {destination_path}")
+    if not _is_within(staged_parent / staged.name, project):
+        raise UnsafePathError(f"staged path escapes project directory: {staged_path}")
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_fd = os.open(staged_parent, directory_flags)
+    try:
+        staged_stat = os.stat(staged.name, dir_fd=directory_fd, follow_symlinks=False)
+        if not stat.S_ISREG(staged_stat.st_mode):
+            raise UnsafePathError(f"staged path is not a regular file: {staged_path}")
+        os.link(
+            staged.name,
+            destination.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        os.unlink(staged.name, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    return destination_parent / destination.name
