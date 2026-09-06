@@ -79,8 +79,13 @@ def _needs_center_crop(analysis: AnalysisArtifact, target: TargetSpec) -> bool:
     video = analysis.probe.video
     if video is None or video.width is None or video.height is None or video.height == 0:
         return False
+    display_width, display_height = video.width, video.height
+    if video.rotation is not None and video.rotation % 360 in {90, 270}:
+        display_width, display_height = display_height, display_width
     target_width, target_height = (int(part) for part in target.aspect_ratio.split(":", maxsplit=1))
-    return not math.isclose(video.width / video.height, target_width / target_height, rel_tol=1e-9)
+    return not math.isclose(
+        display_width / display_height, target_width / target_height, rel_tol=1e-9
+    )
 
 
 def _transform_for_segment(
@@ -114,6 +119,8 @@ def _map_captions(
         return []
     mapped_words: list[TranscriptWord] = []
     for word in transcript.words:
+        if any(word.start < cut.end and cut.start < word.end for cut in cuts):
+            continue
         start = source_to_timeline(word.start, cuts)
         end = source_to_timeline(word.end, cuts)
         if start is None or end is None or end < start:

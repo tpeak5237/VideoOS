@@ -27,6 +27,9 @@ def make_analysis_fixture(
     scenes: list[float] | None = None,
     transcript: Transcript | None = None,
     audio: bool = True,
+    width: int = 1920,
+    height: int = 1080,
+    rotation: int | None = 0,
 ) -> AnalysisArtifact:
     """Return a local, test-only analysis artifact with deterministic defaults."""
     default_transcript = Transcript(
@@ -42,7 +45,7 @@ def make_analysis_fixture(
         probe=MediaProbe(
             duration=duration,
             video=VideoStream(
-                codec_name="h264", width=1920, height=1080, frame_rate=30.0, rotation=0
+                codec_name="h264", width=width, height=height, frame_rate=30.0, rotation=rotation
             ),
             audio=AudioStream(codec_name="aac", sample_rate=48_000, channels=2) if audio else None,
         ),
