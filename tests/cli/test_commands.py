@@ -2,7 +2,8 @@ from typer.testing import CliRunner
 
 from videoos.analysis.models import MediaProbe, VideoStream
 from videoos.cli import _qa_report, app
-from videoos.core.models import TargetSpec
+from videoos.core.io import load_model, save_model_atomic
+from videoos.core.models import SourceSegment, TargetSpec, Timeline, Track
 
 runner = CliRunner()
 
@@ -23,6 +24,36 @@ def test_render_dry_run_does_not_reanalyze(project_fixture, monkeypatch):
     result = runner.invoke(app, ["render", str(project_fixture / "project.json"), "--dry-run"])
 
     assert result.exit_code == 0
+    assert calls == []
+
+
+def test_render_rejects_overlapping_source_overrun_before_planning(project_fixture, monkeypatch):
+    """Dropping semantic validation must not render source overrun or overlapping segments."""
+    timeline_path = project_fixture / "timeline.json"
+    timeline = load_model(timeline_path, Timeline)
+    source_id = timeline.tracks[0].segments[0].source_id
+    invalid_timeline = timeline.model_copy(
+        update={
+            "tracks": [
+                Track(
+                    id="video",
+                    kind="video",
+                    segments=[
+                        SourceSegment(source_id=source_id, source_start=0, source_end=4, timeline_start=0),
+                        SourceSegment(source_id=source_id, source_start=1, source_end=8, timeline_start=1),
+                    ],
+                )
+            ]
+        }
+    )
+    save_model_atomic(timeline_path, invalid_timeline)
+    calls = []
+    monkeypatch.setattr("videoos.cli.AnalysisService.analyze", lambda *args, **kwargs: calls.append(True))
+
+    result = runner.invoke(app, ["render", str(project_fixture / "project.json"), "--dry-run"])
+
+    assert result.exit_code != 0
+    assert "source range exceeds duration" in result.stderr.lower()
     assert calls == []
 
 

@@ -11,7 +11,6 @@ import importlib.util
 import json
 import platform
 import shutil
-import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -22,12 +21,14 @@ from pydantic import BaseModel
 from rich.console import Console
 from rich.table import Table
 
+from videoos.analysis.cache import sha256_file
 from videoos.analysis.models import AnalysisArtifact, AnalysisConfig
 from videoos.analysis.probe import probe_media
 from videoos.analysis.runner import CommandRunner
 from videoos.analysis.service import AnalysisService
 from videoos.core.errors import (
     DependencyError,
+    ExternalCommandError,
     UnsafePathError,
     ValidationError,
     VideoOSError,
@@ -152,7 +153,7 @@ def _require_binary(name: str) -> None:
         raise DependencyError(f"required local dependency not found: {name}")
 
 
-def _doctor_capabilities() -> dict[str, dict[str, Any]]:
+def _doctor_capabilities(*, runner: CommandRunner | None = None) -> dict[str, dict[str, Any]]:
     capabilities: dict[str, dict[str, Any]] = {
         "ffmpeg": {"available": shutil.which("ffmpeg") is not None, "required": True},
         "ffprobe": {"available": shutil.which("ffprobe") is not None, "required": True},
@@ -163,13 +164,12 @@ def _doctor_capabilities() -> dict[str, dict[str, Any]]:
         capabilities[executable] = {"available": shutil.which(executable) is not None, "required": False}
     videotoolbox = False
     if capabilities["ffmpeg"]["available"]:
-        completed = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        videotoolbox = completed.returncode == 0 and "h264_videotoolbox" in completed.stdout
+        try:
+            completed = (runner or CommandRunner()).run(["ffmpeg", "-hide_banner", "-encoders"])
+        except ExternalCommandError:
+            pass
+        else:
+            videotoolbox = "h264_videotoolbox" in completed.stdout
     capabilities["h264_videotoolbox"] = {"available": videotoolbox, "required": False}
     return capabilities
 
@@ -278,8 +278,68 @@ def _load_project(project_path: Path) -> tuple[Path, ProjectManifest, Timeline]:
     return project_dir, manifest, timeline
 
 
+def _persisted_analysis_duration(
+    project_dir: Path,
+    source: Path,
+    reference: AnalysisRef,
+) -> float | None:
+    """Return a duration only when the project artifact still identifies this source."""
+    declared_path = Path(reference.path)
+    if declared_path.is_absolute():
+        raise UnsafePathError("analysis artifact path must be relative to the project directory")
+    try:
+        artifact_path = (project_dir / declared_path).resolve(strict=True)
+    except FileNotFoundError:
+        return None
+    try:
+        artifact_path.relative_to(project_dir)
+    except ValueError as error:
+        raise UnsafePathError("analysis artifact path escapes the project directory") from error
+    if not artifact_path.is_file() or not reference.is_cache_reusable:
+        return None
+    try:
+        artifact = load_model(artifact_path, AnalysisArtifact)
+    except ValueError:
+        return None
+    if (
+        artifact.source_hash != reference.source_sha256
+        or artifact.analysis_fingerprint != reference.analysis_config_fingerprint
+        or artifact.tool_fingerprint != reference.tool_fingerprint
+        or reference.source_sha256 != sha256_file(source)
+    ):
+        return None
+    duration = artifact.probe.duration
+    return duration if duration is not None else None
+
+
+def _verified_source_durations(project_dir: Path, manifest: ProjectManifest) -> dict[str, float]:
+    """Resolve authoritative source durations without invoking analysis orchestration."""
+    durations: dict[str, float] = {}
+    references_by_source: dict[str, list[AnalysisRef]] = {}
+    for reference in manifest.analysis:
+        references_by_source.setdefault(reference.source_id, []).append(reference)
+    runner = CommandRunner()
+    for source_ref in manifest.sources:
+        source = _existing_file(Path(source_ref.path), label=f"source {source_ref.id}")
+        duration = next(
+            (
+                persisted
+                for reference in references_by_source.get(source_ref.id, [])
+                if (persisted := _persisted_analysis_duration(project_dir, source, reference)) is not None
+            ),
+            None,
+        )
+        if duration is None:
+            duration = probe_media(source, runner).duration
+        if duration is None:
+            raise ValidationError(f"source duration unavailable: {source_ref.id}")
+        durations[source_ref.id] = duration
+    return durations
+
+
 def _render(project_path: Path, *, output: Path | None, dry_run: bool) -> dict[str, Any]:
     project_dir, manifest, timeline = _load_project(project_path)
+    timeline.validate_against_sources(_verified_source_durations(project_dir, manifest))
     destination = output or project_dir / "renders" / f"{Path(manifest.name).stem}.mp4"
     destination = _output_path(destination)
     if not dry_run:
