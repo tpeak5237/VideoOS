@@ -55,8 +55,9 @@ class AnalysisCache:
         identity = f"{source_hash}\0{config_hash}\0{tool_hash}"
         return hashlib.sha256(identity.encode("ascii")).hexdigest()
 
-    def artifact_path(self, source_hash: str, config_hash: str) -> Path:
-        """Return a filename-independent path for an analysis artifact."""
+    def artifact_path(self, source_hash: str, config_hash: str, tool_hash: str) -> Path:
+        """Return a complete filename-independent address for an analysis artifact."""
         source_digest = _validated_digest(source_hash, "source_hash")
         config_digest = _validated_digest(config_hash, "config_hash")
-        return self.cache_dir / source_digest / config_digest / "analysis.json"
+        tool_digest = _validated_digest(tool_hash, "tool_hash")
+        return self.cache_dir / source_digest / config_digest / tool_digest / "analysis.json"

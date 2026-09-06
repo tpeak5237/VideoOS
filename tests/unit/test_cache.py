@@ -38,8 +38,21 @@ def test_cache_key_is_stable_for_equivalent_mapping_order_and_artifact_uses_hash
 
     first = cache.key_for(source, {"a": 1, "nested": {"b": 2}}, {"ffprobe": "7.0", "x": "1"})
     second = cache.key_for(source, {"nested": {"b": 2}, "a": 1}, {"x": "1", "ffprobe": "7.0"})
-    artifact = cache.artifact_path("a" * 64, "b" * 64)
+    artifact = cache.artifact_path("a" * 64, "b" * 64, "c" * 64)
 
     assert first == second
     assert source.name not in str(artifact)
-    assert artifact == tmp_path / "cache" / ("a" * 64) / ("b" * 64) / "analysis.json"
+    assert artifact == (
+        tmp_path / "cache" / ("a" * 64) / ("b" * 64) / ("c" * 64) / "analysis.json"
+    )
+
+
+def test_artifact_path_changes_when_tool_fingerprint_changes(tmp_path: Path):
+    """Catches reuse of one artifact path across analyzer-tool upgrades."""
+    cache = AnalysisCache(tmp_path / "cache")
+
+    original = cache.artifact_path("a" * 64, "b" * 64, "c" * 64)
+    upgraded = cache.artifact_path("a" * 64, "b" * 64, "d" * 64)
+
+    assert original != upgraded
+    assert original.name == upgraded.name == "analysis.json"
