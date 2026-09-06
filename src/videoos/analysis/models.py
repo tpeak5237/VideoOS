@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from itertools import pairwise
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -121,6 +122,13 @@ class Transcript(AnalysisModel):
     provider: str = "unknown"
     regions: list[SpeechRegion] = Field(default_factory=list)
     words: list[TranscriptWord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_word_order(self) -> Transcript:
+        """Reject descending word starts; same-start/overlapping words remain valid."""
+        if any(current.start < previous.start for previous, current in pairwise(self.words)):
+            raise ValueError("words must be ordered by nondecreasing start timestamp")
+        return self
 
 
 class CapabilityStatus(AnalysisModel):

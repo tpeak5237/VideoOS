@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -26,6 +27,13 @@ class CaptionStyle(BaseModel):
     def validate_font_name(cls, value: str) -> str:
         if not value or any(character in value for character in ",\r\n"):
             raise ValueError("font_name must be non-empty and cannot contain commas or line breaks")
+        return value
+
+    @field_validator("primary_colour", "outline_colour")
+    @classmethod
+    def validate_ass_colour(cls, value: str) -> str:
+        if re.fullmatch(r"&H[0-9A-Fa-f]{8}", value) is None:
+            raise ValueError("ASS colour must use the &HAABBGGRR grammar")
         return value
 
     @field_validator("font_size", "outline", "shadow")

@@ -40,11 +40,15 @@ def _cue_text(cue: CaptionCue) -> str:
 
 def _validated_cues(cues: Iterable[CaptionCue]) -> list[CaptionCue]:
     result = list(cues)
+    previous_start: float | None = None
     for cue in result:
         start = finite_non_negative(cue.start, "cue start")
         end = finite_non_negative(cue.end, "cue end")
         if end < start:
             raise ValueError("cue end must be greater than or equal to cue start")
+        if previous_start is not None and start < previous_start:
+            raise ValueError("cues must be ordered by nondecreasing start timestamp")
+        previous_start = start
     return result
 
 
