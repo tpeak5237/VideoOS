@@ -1,0 +1,16 @@
+name: podcast
+silence:
+  remove: true
+  max_pause_ms: 600
+captions:
+  enabled: true
+  max_words_per_line: 6
+reframe:
+  subject_tracking: false
+zoom:
+  enabled: false
+  min_interval_seconds: 30
+  max_scale: 1.03
+audio:
+  speech_target_lufs: -16
+  music_under_speech_lufs: -28
