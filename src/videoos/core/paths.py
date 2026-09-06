@@ -31,8 +31,13 @@ def resolve_input_path(path: str | Path, *, base_dir: Path | None = None) -> Pat
     return resolved.resolve(strict=True)
 
 
-def ensure_output_path(path: str | Path, *, project_dir: Path | None = None) -> Path:
-    """Validate a new output path inside ``project_dir`` without touching files."""
+def ensure_output_path(
+    path: str | Path,
+    *,
+    project_dir: Path | None = None,
+    allow_existing: bool = False,
+) -> Path:
+    """Validate an output path inside ``project_dir`` without touching files."""
     project = _resolved_base(project_dir)
     candidate = Path(path)
     unresolved = candidate if candidate.is_absolute() else project / candidate
@@ -40,7 +45,7 @@ def ensure_output_path(path: str | Path, *, project_dir: Path | None = None) -> 
     resolved = parent / unresolved.name
     if not _is_within(resolved, project):
         raise UnsafePathError(f"output path escapes project directory: {path}")
-    if resolved.exists():
+    if resolved.exists() and not allow_existing:
         raise UnsafePathError(f"output path already exists: {resolved}")
     return resolved
 

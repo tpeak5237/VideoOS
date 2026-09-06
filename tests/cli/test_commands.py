@@ -1,9 +1,17 @@
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from videoos.analysis.models import MediaProbe, VideoStream
 from videoos.cli import _qa_report, app
 from videoos.core.io import load_model, save_model_atomic
-from videoos.core.models import SourceSegment, TargetSpec, Timeline, Track
+from videoos.core.models import (
+    ProjectManifest,
+    SourceSegment,
+    TargetSpec,
+    Timeline,
+    Track,
+)
 
 runner = CliRunner()
 
@@ -25,6 +33,29 @@ def test_render_dry_run_does_not_reanalyze(project_fixture, monkeypatch):
 
     assert result.exit_code == 0
     assert calls == []
+
+
+def test_render_dry_run_allows_an_existing_destination_without_mutating_it(project_fixture):
+    """Dry runs plan an occupied output but must not replace the published media."""
+    manifest = load_model(project_fixture / "project.json", ProjectManifest)
+    output = project_fixture / "renders" / f"{Path(manifest.name).stem}.mp4"
+    output.parent.mkdir()
+    output.write_bytes(b"published-output")
+
+    result = runner.invoke(app, ["render", str(project_fixture / "project.json"), "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert output.read_bytes() == b"published-output"
+
+
+def test_render_dry_run_emits_a_structured_plan(project_fixture):
+    """Dry-run output must expose its argv-array and operations for inspection."""
+    result = runner.invoke(app, ["render", str(project_fixture / "project.json"), "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "plan" in result.output
+    assert '"argv"' in result.output
+    assert '"operations"' in result.output
 
 
 def test_render_rejects_overlapping_source_overrun_before_planning(project_fixture, monkeypatch):

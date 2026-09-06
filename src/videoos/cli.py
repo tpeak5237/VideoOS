@@ -345,14 +345,33 @@ def _render(project_path: Path, *, output: Path | None, dry_run: bool) -> dict[s
     if not dry_run:
         _require_binary("ffmpeg")
     renderer = FfmpegRenderer()
-    plan = renderer.build_plan(timeline, manifest, output=destination)
+    plan = renderer.build_plan(timeline, manifest, output=destination, allow_existing_output=dry_run)
     result = renderer.render(plan, dry_run=dry_run)
-    return {
+    payload: dict[str, Any] = {
         "project": str(project_path),
         "output": str(result.output) if result.output is not None else str(destination),
         "dry_run": result.dry_run,
         "warnings": list(plan.warnings),
     }
+    if dry_run:
+        payload["plan"] = {
+            "argv": list(plan.argv),
+            "expected_duration_seconds": plan.expected_duration_seconds,
+            "has_audio": plan.has_audio,
+            "operations": [
+                {
+                    "has_audio": operation.has_audio,
+                    "input_index": operation.input_index,
+                    "source_end": operation.source_end,
+                    "source_id": operation.source_id,
+                    "source_start": operation.source_start,
+                    "transform": operation.transform.model_dump(mode="json") if operation.transform else None,
+                }
+                for operation in plan.operations
+            ],
+            "video_codec": plan.video_codec,
+        }
+    return payload
 
 
 def _qa_report(

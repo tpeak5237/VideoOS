@@ -197,13 +197,18 @@ class FfmpegRenderer:
         *,
         output: Path,
         caption_file: Path | None = None,
+        allow_existing_output: bool = False,
     ) -> RenderPlan:
         destination = Path(output)
         operations = _source_operations(timeline, manifest)
         source_paths = {operation.source_path.resolve(strict=True) for operation in operations}
         if destination.resolve(strict=False) in source_paths:
             raise UnsafePathError("render output must not be a source path")
-        destination = ensure_output_path(destination, project_dir=destination.parent)
+        destination = ensure_output_path(
+            destination,
+            project_dir=destination.parent,
+            allow_existing=allow_existing_output,
+        )
         controlled_caption = _controlled_caption_file(caption_file) if caption_file is not None else None
         has_audio = all(operation.has_audio for operation in operations)
         warnings: list[str] = []

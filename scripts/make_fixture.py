@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 from pathlib import Path
 
@@ -73,3 +74,16 @@ def make_fixture(output: Path) -> Path:
     if not destination.is_file() or destination.stat().st_size == 0:
         raise RuntimeError("ffmpeg fixture generation did not create a non-empty output")
     return destination
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Create a fixture at the output path supplied by the documented command."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path, help="destination MP4 path")
+    arguments = parser.parse_args(argv)
+    print(make_fixture(arguments.output))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

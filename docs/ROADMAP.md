@@ -13,3 +13,7 @@ Faceless assembly, licensed-asset workflows/indexing, remote vision/audio adapte
 Publishing/account integrations, collaboration, remote job orchestration, telemetry/observability, and commercial workflow controls.
 
 Status: implementation and local tests are distinct from CI, deployment, authenticated providers, persistence outside the local filesystem, and live verification. P0 documentation does not claim those higher proof layers.
+
+## P0 local verification checkpoint (2026-09-06)
+
+`IMPLEMENTED` and `TESTED`: the local P0 workflow has a timestamped record in [VERIFICATION.md](VERIFICATION.md), including Ruff, complete pytest, FFmpeg integration, CLI smoke, artifact, source-immutability, and QA checks. `DEPLOYED` and `VERIFIED LIVE` remain `BLOCKED / UNVERIFIED — no deployment target in scope`.
