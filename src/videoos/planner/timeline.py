@@ -8,9 +8,10 @@ from videoos.core.time import TimeRange, finite_non_negative
 
 
 def _merged_ranges(ranges: Sequence[TimeRange]) -> list[TimeRange]:
+    """Merge only overlapping open cut interiors; preserve shared endpoints."""
     merged: list[TimeRange] = []
     for item in sorted(ranges, key=lambda value: (value.start, value.end)):
-        if merged and item.start <= merged[-1].end:
+        if merged and item.start < merged[-1].end:
             merged[-1] = TimeRange(start=merged[-1].start, end=max(merged[-1].end, item.end))
         else:
             merged.append(item)
@@ -18,13 +19,19 @@ def _merged_ranges(ranges: Sequence[TimeRange]) -> list[TimeRange]:
 
 
 def source_to_timeline(source_time: float, cuts: Sequence[TimeRange]) -> float | None:
-    """Map a source time through removed ranges, returning None inside a cut."""
+    """Map source time through open cut interiors, retaining exact cut boundaries.
+
+    Temporal cuts use the open interval ``(start, end)``: an instant exactly at
+    either boundary has no removed duration and remains mappable. This keeps a
+    word ending at ``start`` or starting at ``end`` while rejecting words that
+    intersect a cut interior.
+    """
     source = finite_non_negative(source_time, "source_time")
     removed_before = 0.0
     for cut in _merged_ranges(cuts):
-        if cut.start <= source <= cut.end:
+        if cut.start < source < cut.end:
             return None
-        if cut.end < source:
+        if cut.end <= source:
             removed_before += cut.duration()
         else:
             break

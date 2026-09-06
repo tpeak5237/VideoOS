@@ -17,6 +17,19 @@ def test_source_to_timeline_excludes_removed_range():
     assert source_to_timeline(5.0, cuts) == 3.0
 
 
+def test_source_to_timeline_keeps_open_cut_boundaries():
+    cuts = [TimeRange(start=2.0, end=4.0)]
+
+    assert source_to_timeline(2.0, cuts) == 2.0
+    assert source_to_timeline(4.0, cuts) == 2.0
+
+
+def test_source_to_timeline_keeps_a_shared_open_boundary_between_adjacent_cuts():
+    cuts = [TimeRange(start=1.0, end=2.0), TimeRange(start=2.0, end=3.0)]
+
+    assert source_to_timeline(2.0, cuts) == 1.0
+
+
 def test_source_to_timeline_merges_overlapping_removed_ranges():
     cuts = [TimeRange(start=2.0, end=4.0), TimeRange(start=3.0, end=5.0)]
 
@@ -87,6 +100,26 @@ def test_caption_mapping_drops_unicode_word_spanning_a_single_cut():
     assert [cue.text for cue in cues] == ["ก่อน หลัง"]
     assert cues[0].start == pytest.approx(0.2)
     assert cues[0].end == pytest.approx(1.8)
+
+
+def test_caption_mapping_keeps_unicode_word_ending_at_cut_start():
+    cues = _map_captions(
+        Transcript(words=[TranscriptWord(text="ก่อน", start=0.2, end=1.0)]),
+        [TimeRange(start=1.0, end=2.0)],
+        load_profile("talking-head-shortform"),
+    )
+
+    assert [(cue.text, cue.start, cue.end) for cue in cues] == [("ก่อน", 0.2, 1.0)]
+
+
+def test_caption_mapping_keeps_unicode_word_starting_at_cut_end():
+    cues = _map_captions(
+        Transcript(words=[TranscriptWord(text="หลัง", start=2.0, end=2.4)]),
+        [TimeRange(start=1.0, end=2.0)],
+        load_profile("talking-head-shortform"),
+    )
+
+    assert [(cue.text, cue.start, cue.end) for cue in cues] == [("หลัง", 1.0, 1.4)]
 
 
 def test_caption_mapping_drops_word_spanning_multiple_cuts():
