@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from videoos.analysis.models import AnalysisConfig, MediaProbe, VideoStream
+from videoos.analysis.models import AnalysisConfig, AudioStream, MediaProbe, VideoStream
 from videoos.analysis.service import AnalysisService
 
 
@@ -61,3 +61,37 @@ def test_analysis_without_audio_skips_silence_and_records_capability(tmp_path: P
 
     assert artifact.silence_regions == []
     assert any(status.name == "silence" and not status.available for status in artifact.capabilities)
+
+
+def test_reversed_silence_pair_is_omitted_and_records_unclosed_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Catches clearing a pending silence start when its FFmpeg end precedes it."""
+    from videoos.analysis import service as service_module
+
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"fixture")
+    runner = RecordingRunner()
+
+    def fake_probe(path: Path, active_runner: RecordingRunner) -> MediaProbe:
+        active_runner.run(["ffprobe", str(path)])
+        return MediaProbe(
+            duration=4.0,
+            video=VideoStream("h264", 640, 360, 30.0, None),
+            audio=AudioStream("aac", 48_000, 2),
+        )
+
+    def run_with_reversed_silence(args: list[str]) -> object:
+        runner.calls.append(args)
+        return type("Result", (), {"stdout": "", "stderr": "silence_start: 3\nsilence_end: 2\n"})()
+
+    monkeypatch.setattr(runner, "run", run_with_reversed_silence)
+    monkeypatch.setattr(service_module, "probe_media", fake_probe)
+    monkeypatch.setattr(service_module, "detect_scenes", lambda *args, **kwargs: [])
+
+    artifact = AnalysisService(cache_dir=tmp_path / "cache", runner=runner).analyze(
+        source, config=AnalysisConfig()
+    )
+
+    assert artifact.silence_regions == []
+    assert "ignored unclosed silence interval" in artifact.warnings

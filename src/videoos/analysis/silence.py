@@ -41,8 +41,11 @@ def _has_unclosed_silence(stderr: str) -> bool:
             candidate = float(start_match.group(1))
             start = candidate if candidate >= 0 else None
             continue
-        if _END.search(line) is not None:
-            start = None
+        end_match = _END.search(line)
+        if end_match is not None and start is not None:
+            end = float(end_match.group(1))
+            if end >= start:
+                start = None
     return start is not None
 
 
