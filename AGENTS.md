@@ -27,7 +27,7 @@ Analysis is content-addressed from the source SHA-256 plus canonical analysis-co
 2. Copy `timeline.json` before changing it.
 3. Edit only structured timeline fields: add/reorder non-overlapping segments, adjust source/timeline timestamps, captions, and supported transform/audio fields.
 4. Preserve source IDs from `project.json`; ensure each `source_end` is within the source and every caption ends within timeline duration.
-5. Run `videoos render PROJECT_JSON --dry-run`, then `videoos render PROJECT_JSON`, then `videoos qa OUTPUT --timeline timeline.json`.
+5. Select a fresh `OUTPUT` path. Run `videoos render PROJECT_JSON --output OUTPUT --dry-run`, then `videoos render PROJECT_JSON --output OUTPUT`, then `videoos qa OUTPUT --timeline timeline.json`. P0 supports one continuous video track; gaps, multiple tracks, and standalone audio tracks are rejected.
 
 Agents edit structured timelines and rerender. They do not patch generated FFmpeg argv or ask users to execute ad-hoc FFmpeg commands.
 

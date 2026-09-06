@@ -42,6 +42,15 @@ class TargetSpec(SchemaModel):
     aspect_ratio: str
     resolution: str
 
+    @model_validator(mode="after")
+    def validate_display_dimensions(self) -> TargetSpec:
+        numerator, denominator = map(int, self.aspect_ratio.split(":"))
+        if self.width % 2 or self.height % 2:
+            raise ValueError("H.264/yuv420p resolution must have even dimensions")
+        if self.width * denominator != self.height * numerator:
+            raise ValueError("resolution must match aspect_ratio")
+        return self
+
     @property
     def width(self) -> int:
         return int(self.resolution.split("x", maxsplit=1)[0])
@@ -69,6 +78,7 @@ class TargetSpec(SchemaModel):
 class SourceRef(SchemaModel):
     id: str
     path: str
+    has_audio: bool | None = None
 
     @field_validator("id", "path")
     @classmethod
@@ -206,7 +216,7 @@ class AudioAdjustment(SchemaModel):
     def validate_target_lufs(cls, value: float | None) -> float | None:
         if value is None:
             return value
-        return _finite_in_range(value, "target_lufs", -70, 0)
+        return _finite_in_range(value, "target_lufs", -70, -5)
 
     @field_validator("fade_in_seconds", "fade_out_seconds")
     @classmethod

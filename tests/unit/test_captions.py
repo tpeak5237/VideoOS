@@ -101,6 +101,14 @@ def test_ass_has_deterministic_style_and_escapes_intentional_line_breaks():
     assert "Dialogue: 0,0:00:00.00,0:00:01.25,Default,,0,0,0,,สวัสดี\\Nworld" in rendered
 
 
+def test_ass_user_override_syntax_cannot_change_style_or_add_events():
+    rendered = to_ass([CaptionCue(start=0, end=1, text="ไทย{\\p1}\\N\nDialogue: injected")], CaptionStyle())
+    dialogue = rendered.split("Dialogue: 0,", 1)[1]
+    assert "ไทย" in dialogue
+    assert "{" not in dialogue and "\\p1" not in dialogue
+    assert rendered.count("\nDialogue:") == 1
+
+
 @pytest.mark.parametrize("field", ["primary_colour", "outline_colour"])
 @pytest.mark.parametrize("value", ["&H00FFFFFF,Injected", "&H00FFFFFF\n[Events]", "#ffffff"])
 def test_caption_style_rejects_ass_colour_injection(field: str, value: str):

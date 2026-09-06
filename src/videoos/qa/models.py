@@ -51,9 +51,10 @@ class QAExpectation(QAModel):
     duration: float | None = None
     width: int | None = Field(default=None, gt=0)
     height: int | None = Field(default=None, gt=0)
-    audio_required: bool = False
-    black_frame_at_start: bool = False
-    black_frame_at_end: bool = False
+    audio_required: bool | None = None
+    square_pixels_required: bool = False
+    black_frame_at_start: bool | None = None
+    black_frame_at_end: bool | None = None
     black_frames_allowed: bool = True
     audio_peak_dbfs: float | None = None
     maximum_audio_peak_dbfs: float | None = None

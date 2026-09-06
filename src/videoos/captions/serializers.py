@@ -71,7 +71,12 @@ def to_vtt(cues: Iterable[CaptionCue]) -> str:
 
 
 def _ass_text(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}").replace("\n", "\\N")
+    # ASS has executable override blocks and backslash escapes, not a general
+    # literal-text quoting mechanism. Render those three characters as visible
+    # fullwidth punctuation; only serializer-owned line breaks become escapes.
+    if any(ord(character) < 32 and character not in "\n\t" for character in value):
+        raise ValueError("caption text contains unsupported control characters")
+    return value.translate(str.maketrans({"\\": "＼", "{": "｛", "}": "｝", "\n": "\\N"}))
 
 
 def _ass_number(value: float) -> str:

@@ -75,6 +75,8 @@ def parse_ffprobe_json(payload: Mapping[str, object]) -> MediaProbe:
                 height=_optional_int(stream.get("height")),
                 frame_rate=_frame_rate(stream.get("r_frame_rate")),
                 rotation=_rotation(stream),
+                sample_aspect_ratio=_frame_rate(str(stream.get("sample_aspect_ratio", "")).replace(":", "/")),
+                display_aspect_ratio=_frame_rate(str(stream.get("display_aspect_ratio", "")).replace(":", "/")),
             )
         elif codec_type == "audio" and audio is None:
             codec_name = stream.get("codec_name")

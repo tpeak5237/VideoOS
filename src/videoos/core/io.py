@@ -9,6 +9,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from .paths import publish_staged_output
+
 
 def _reject_non_standard_json_constant(_: str) -> None:
     raise ValueError("non-standard JSON constant")
@@ -26,7 +28,7 @@ def load_model[T: BaseModel](path: Path, model_type: type[T]) -> T:
     return model_type.model_validate(payload)
 
 
-def save_model_atomic(path: Path, model: BaseModel) -> None:
+def save_model_atomic(path: Path, model: BaseModel, *, exclusive: bool = False) -> None:
     """Durably replace ``path`` with UTF-8 JSON using a sibling temporary file."""
     destination = Path(path)
     temporary_path: Path | None = None
@@ -45,7 +47,10 @@ def save_model_atomic(path: Path, model: BaseModel) -> None:
             temporary.write("\n")
             temporary.flush()
             os.fsync(temporary.fileno())
-        os.replace(temporary_path, destination)
+        if exclusive:
+            publish_staged_output(temporary_path, destination, project_dir=destination.parent)
+        else:
+            os.replace(temporary_path, destination)
     except Exception:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)

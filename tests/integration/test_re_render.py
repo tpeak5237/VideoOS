@@ -53,6 +53,6 @@ def test_timeline_edit_rerenders_without_analysis_or_source_mutation(synthetic_v
     assert original_output.read_bytes() == original_output_bytes
     assert qa_result.exit_code == 0, qa_result.output
     assert json.loads(qa_result.output)["passed"] is True
-    assert planned_graphs and "zoompan=z='min(1.04,zoom+0.0)'" in planned_graphs[0]
+    assert planned_graphs and "trunc(iw/1.04/2)*2" in planned_graphs[0]
     assert hashlib.sha256(synthetic_video.read_bytes()).hexdigest() == source_hash
     assert analysis_path.read_bytes() == original_analysis

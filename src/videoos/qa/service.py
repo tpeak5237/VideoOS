@@ -7,6 +7,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from videoos.core.paths import publish_staged_output
+
 from .models import QAReport
 
 
@@ -14,7 +16,7 @@ def _destination(path: Path) -> Path:
     return path if path.name.endswith(".qa.json") else path.with_suffix(".qa.json")
 
 
-def write_qa_report(path: Path, report: QAReport) -> None:
+def write_qa_report(path: Path, report: QAReport, *, exclusive: bool = False) -> None:
     """Atomically write a sorted JSON report beside an output media file."""
     destination = _destination(Path(path))
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -30,7 +32,10 @@ def write_qa_report(path: Path, report: QAReport) -> None:
             temporary.write(encoded)
             temporary.flush()
             os.fsync(temporary.fileno())
-        os.replace(temporary_path, destination)
+        if exclusive:
+            publish_staged_output(temporary_path, destination, project_dir=destination.parent)
+        else:
+            os.replace(temporary_path, destination)
     except Exception:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)

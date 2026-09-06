@@ -143,6 +143,7 @@ def test_output_warns_for_black_frames_and_audio_peak_without_failing(tmp_path: 
             black_frame_at_start=True,
             black_frame_at_end=True,
             audio_peak_dbfs=-0.5,
+            audio_required=True,
         ),
         make_media_probe(),
     )

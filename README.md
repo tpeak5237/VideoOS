@@ -33,12 +33,14 @@ Edit structured data, not an FFmpeg command. Back up `timeline.json`, keep every
 ```sh
 cp input.videoos/timeline.json input.videoos/timeline.before-edit.json
 # Edit input.videoos/timeline.json with a JSON-aware editor.
-videoos render input.videoos/project.json --dry-run
-videoos render input.videoos/project.json
-videoos qa input.videoos/renders/input.mp4 --timeline input.videoos/timeline.json
+videoos render input.videoos/project.json --output input.videoos/renders/revised.mp4 --dry-run
+videoos render input.videoos/project.json --output input.videoos/renders/revised.mp4
+videoos qa input.videoos/renders/revised.mp4 --timeline input.videoos/timeline.json
 ```
 
 See [CLI reference](docs/CLI.md), [project format](docs/PROJECT_FORMAT.md), and [rendering](docs/RENDERING.md) for exact behavior. `render` consumes the existing project and timeline; it does not run analysis again.
+
+Project initialization is exclusive: repeated `edit`/`shorts` commands reject existing artifacts. Use `render` with a fresh output name for timeline edits. P0 renders one continuous video track; gaps, multiple tracks, and standalone audio tracks are rejected. Every media-producing command writes QA and exits nonzero on failed invariants; advisory warnings remain nonfatal.
 
 ## Capabilities and fallbacks
 

@@ -4,27 +4,29 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from importlib.resources import files
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 import yaml
 
 from .models import Profile
 
-_BUILTINS_DIR = Path(__file__).with_name("builtins")
+_BUILTINS_DIR = files("videoos.profiles").joinpath("builtins")
 _SUPPORTED_SUFFIXES = {".json", ".yaml", ".yml"}
 
 
-def _builtin_path(name: str) -> Path | None:
+def _builtin_path(name: str) -> Traversable | None:
     if not name or Path(name).name != name:
         return None
     path = _BUILTINS_DIR / f"{name}.yaml"
     return path if path.is_file() else None
 
 
-def _resolve_profile_path(name_or_path: str) -> Path:
+def _resolve_profile_path(name_or_path: str) -> Traversable:
     builtin = _builtin_path(name_or_path)
     if builtin is not None:
-        return builtin.resolve()
+        return builtin
     path = Path(name_or_path).expanduser()
     if path.suffix.lower() not in _SUPPORTED_SUFFIXES:
         raise ValueError("profile must be an exact built-in slug or a .yaml, .yml, or .json file")
@@ -34,9 +36,9 @@ def _resolve_profile_path(name_or_path: str) -> Path:
     return resolved
 
 
-def _read_payload(path: Path) -> Mapping[str, object]:
+def _read_payload(path: Traversable) -> Mapping[str, object]:
     text = path.read_text(encoding="utf-8")
-    loaded = json.loads(text) if path.suffix.lower() == ".json" else yaml.safe_load(text)
+    loaded = json.loads(text) if path.name.lower().endswith(".json") else yaml.safe_load(text)
     if not isinstance(loaded, Mapping):
         raise TypeError("profile root must be a mapping")
     return loaded

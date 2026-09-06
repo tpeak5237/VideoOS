@@ -1,4 +1,7 @@
-import subprocess
+"""Exercise the actual local subprocess safety and resource boundary."""
+
+import json
+import sys
 
 import pytest
 
@@ -6,63 +9,31 @@ from videoos.analysis.runner import CommandRunner
 from videoos.core.errors import ExternalCommandError
 
 
-def test_runner_passes_argument_array_without_shell(monkeypatch: pytest.MonkeyPatch):
-    """Catches a regression that could turn media paths into shell syntax."""
-    calls: dict[str, object] = {}
-
-    def fake_run(*args: object, **kwargs: object) -> object:
-        calls.update(args=args, kwargs=kwargs)
-        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    CommandRunner().run(["ffprobe", "-i", "file with spaces.mp4"])
-
-    assert calls["args"] == (["ffprobe", "-i", "file with spaces.mp4"],)
-    assert calls["kwargs"] == {
-        "shell": False,
-        "check": False,
-        "capture_output": True,
-        "text": True,
-        "timeout": None,
-    }
+def test_runner_passes_argument_array_without_shell(tmp_path):
+    marker = tmp_path / "must-not-exist"
+    argument = f"$(touch {marker});'quoted' ไทย"
+    result = CommandRunner().run([sys.executable, "-c", "import json,sys; print(json.dumps(sys.argv[1:]))", argument])
+    assert json.loads(result.stdout) == [argument]
+    assert not marker.exists()
 
 
-def test_nonzero_command_raises_typed_error_with_bounded_stderr(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Catches leaking an unbounded external-tool diagnostic on failure."""
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: type(
-            "Result", (), {"returncode": 1, "stdout": "", "stderr": "bad media" * 1_000}
-        )(),
-    )
-
-    with pytest.raises(ExternalCommandError, match="ffprobe.*exit code 1") as exc_info:
-        CommandRunner().run(["ffprobe", "bad.mp4"])
-
-    assert len(str(exc_info.value)) < 1_000
+def test_nonzero_command_raises_typed_error_with_bounded_stderr():
+    with pytest.raises(ExternalCommandError, match="exit code 1") as caught:
+        CommandRunner().run([sys.executable, "-c", "import sys; sys.stderr.write('bad media'*1000); sys.exit(1)"])
+    assert len(str(caught.value)) < 1000
 
 
-def test_missing_command_raises_typed_error(monkeypatch: pytest.MonkeyPatch):
-    """Catches exposing a raw FileNotFoundError to analysis callers."""
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
-
-    with pytest.raises(ExternalCommandError, match="ffprobe.*not found"):
-        CommandRunner().run(["ffprobe", "clip.mp4"])
+def test_missing_command_raises_typed_error():
+    with pytest.raises(ExternalCommandError, match="not found"):
+        CommandRunner().run(["/nonexistent/videoos-tool"])
 
 
-def test_timed_out_command_raises_typed_error(monkeypatch: pytest.MonkeyPatch):
-    """Catches exposing a raw timeout exception to analysis callers."""
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            subprocess.TimeoutExpired(cmd=["ffprobe", "clip.mp4"], timeout=2, stderr="too slow")
-        ),
-    )
+def test_timed_out_command_raises_typed_error():
+    with pytest.raises(ExternalCommandError, match="timed out"):
+        CommandRunner(default_timeout=0.05).run([sys.executable, "-c", "import time; time.sleep(10)"])
 
-    with pytest.raises(ExternalCommandError, match="ffprobe.*timed out"):
-        CommandRunner().run(["ffprobe", "clip.mp4"], timeout=2)
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_output_limit_terminates_instead_of_truncating_evidence(stream):
+    with pytest.raises(ExternalCommandError, match="output limit"):
+        CommandRunner(max_output_bytes=1024).run([sys.executable, "-c", f"import sys; sys.{stream}.write('x'*1000000)"])

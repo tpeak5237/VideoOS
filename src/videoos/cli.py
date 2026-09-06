@@ -12,6 +12,7 @@ import json
 import platform
 import shutil
 import sys
+import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -22,10 +23,12 @@ from rich.console import Console
 from rich.table import Table
 
 from videoos.analysis.cache import sha256_file
-from videoos.analysis.models import AnalysisArtifact, AnalysisConfig
+from videoos.analysis.models import AnalysisArtifact, AnalysisConfig, MediaProbe
 from videoos.analysis.probe import probe_media
 from videoos.analysis.runner import CommandRunner
 from videoos.analysis.service import AnalysisService
+from videoos.captions.models import CaptionStyle
+from videoos.captions.serializers import to_ass
 from videoos.core.errors import (
     DependencyError,
     ExternalCommandError,
@@ -43,11 +46,13 @@ from videoos.core.models import (
     Timeline,
     Track,
 )
+from videoos.core.paths import preflight_new_outputs, resolve_input_path
 from videoos.planner.shorts import ShortCandidate, score_short_candidates
 from videoos.planner.talking_head import plan_talking_head
 from videoos.profiles.loader import load_profile
 from videoos.qa.checks import check_output, check_timeline
-from videoos.qa.models import QAExpectation, QAReport
+from videoos.qa.measurements import measure_content
+from videoos.qa.models import QACheck, QAExpectation, QAReport
 from videoos.qa.service import write_qa_report
 from videoos.renderer.ffmpeg import FfmpegRenderer
 from videoos.speech.faster_whisper import FasterWhisperTranscriber
@@ -218,13 +223,20 @@ def _project_directory(source: Path, output: Path | None) -> tuple[Path, Path]:
         project_dir = source.parent / f"{source.stem}.videoos"
         render_output = project_dir / "renders" / f"{source.stem}.mp4"
     elif output.suffix:
-        render_output = _output_path(output, source=source)
+        render_output = output.expanduser().resolve(strict=False)
         project_dir = render_output.parent / f"{render_output.stem}.videoos"
     else:
         project_dir = Path(output).expanduser()
         render_output = project_dir / "renders" / f"{source.stem}.mp4"
-    project_dir.mkdir(parents=True, exist_ok=True)
-    return project_dir.resolve(strict=True), render_output
+    return project_dir.resolve(strict=False), render_output.resolve(strict=False)
+
+
+def _preflight_project(project_dir: Path, sources: list[Path], render_output: Path) -> None:
+    preflight_new_outputs([
+        project_dir / "project.json", project_dir / "timeline.json",
+        project_dir / "analysis", project_dir / "renders", project_dir / "cache",
+        render_output, render_output.with_suffix(".qa.json"),
+    ], sources)
 
 
 def _analysis_reference(source_id: str, analysis_path: Path, artifact: AnalysisArtifact, project_dir: Path) -> AnalysisRef:
@@ -237,16 +249,15 @@ def _analysis_reference(source_id: str, analysis_path: Path, artifact: AnalysisA
     )
 
 
-def _write_project(source: Path, artifact: AnalysisArtifact, *, project_dir: Path, target: TargetSpec, profile_name: str, captions: bool) -> tuple[ProjectManifest, Timeline, Path]:
+def _write_project(source: Path, artifact: AnalysisArtifact, *, project_dir: Path, target: TargetSpec, profile_name: str, captions: bool, render_output: Path | None = None) -> tuple[ProjectManifest, Timeline, Path]:
+    _preflight_project(project_dir, [source], render_output or project_dir / "renders" / f"{source.stem}.mp4")
     analysis_dir = project_dir / "analysis"
-    analysis_dir.mkdir(exist_ok=True)
     analysis_path = analysis_dir / f"{artifact.source_hash}.json"
-    save_model_atomic(analysis_path, artifact)
     manifest = ProjectManifest(
         version="1",
         project_id=artifact.source_hash,
         name=source.stem,
-        sources=[SourceRef(id=artifact.source_hash, path=str(source))],
+        sources=[SourceRef(id=artifact.source_hash, path=str(source), has_audio=artifact.probe.audio is not None)],
         target=target,
         analysis=[_analysis_reference(artifact.source_hash, analysis_path, artifact, project_dir)],
     )
@@ -254,8 +265,10 @@ def _write_project(source: Path, artifact: AnalysisArtifact, *, project_dir: Pat
     if not captions:
         timeline = timeline.model_copy(update={"captions": []})
     timeline.validate_against_sources({artifact.source_hash: artifact.probe.duration or 0.0})
-    save_model_atomic(project_dir / "project.json", manifest)
-    save_model_atomic(project_dir / "timeline.json", timeline)
+    analysis_dir.mkdir(parents=True)
+    save_model_atomic(analysis_path, artifact, exclusive=True)
+    save_model_atomic(project_dir / "project.json", manifest, exclusive=True)
+    save_model_atomic(project_dir / "timeline.json", timeline, exclusive=True)
     return manifest, timeline, analysis_path
 
 
@@ -274,16 +287,19 @@ def _load_project(project_path: Path) -> tuple[Path, ProjectManifest, Timeline]:
     if unknown_ids:
         raise ValidationError("timeline references an unknown project source")
     for source in manifest.sources:
-        _existing_file(Path(source.path), label=f"source {source.id}")
+        declared = Path(source.path)
+        resolved = (_existing_file(declared, label=f"source {source.id}") if declared.is_absolute()
+                    else resolve_input_path(declared, base_dir=project_dir))
+        source.path = str(resolved)
     return project_dir, manifest, timeline
 
 
-def _persisted_analysis_duration(
+def _persisted_analysis_probe(
     project_dir: Path,
     source: Path,
     reference: AnalysisRef,
-) -> float | None:
-    """Return a duration only when the project artifact still identifies this source."""
+) -> MediaProbe | None:
+    """Return stream metadata only when the artifact still identifies this source."""
     declared_path = Path(reference.path)
     if declared_path.is_absolute():
         raise UnsafePathError("analysis artifact path must be relative to the project directory")
@@ -308,8 +324,7 @@ def _persisted_analysis_duration(
         or reference.source_sha256 != sha256_file(source)
     ):
         return None
-    duration = artifact.probe.duration
-    return duration if duration is not None else None
+    return artifact.probe
 
 
 def _verified_source_durations(project_dir: Path, manifest: ProjectManifest) -> dict[str, float]:
@@ -320,17 +335,22 @@ def _verified_source_durations(project_dir: Path, manifest: ProjectManifest) -> 
         references_by_source.setdefault(reference.source_id, []).append(reference)
     runner = CommandRunner()
     for source_ref in manifest.sources:
-        source = _existing_file(Path(source_ref.path), label=f"source {source_ref.id}")
-        duration = next(
+        declared = Path(source_ref.path)
+        source = (_existing_file(declared, label=f"source {source_ref.id}") if declared.is_absolute()
+                  else resolve_input_path(declared, base_dir=project_dir))
+        source_ref.path = str(source)
+        probe = next(
             (
                 persisted
                 for reference in references_by_source.get(source_ref.id, [])
-                if (persisted := _persisted_analysis_duration(project_dir, source, reference)) is not None
+                if (persisted := _persisted_analysis_probe(project_dir, source, reference)) is not None
             ),
             None,
         )
-        if duration is None:
-            duration = probe_media(source, runner).duration
+        if probe is None:
+            probe = probe_media(source, runner)
+        source_ref.has_audio = probe.audio is not None
+        duration = probe.duration
         if duration is None:
             raise ValidationError(f"source duration unavailable: {source_ref.id}")
         durations[source_ref.id] = duration
@@ -339,14 +359,31 @@ def _verified_source_durations(project_dir: Path, manifest: ProjectManifest) -> 
 
 def _render(project_path: Path, *, output: Path | None, dry_run: bool) -> dict[str, Any]:
     project_dir, manifest, timeline = _load_project(project_path)
-    timeline.validate_against_sources(_verified_source_durations(project_dir, manifest))
+    durations = _verified_source_durations(project_dir, manifest)
+    timeline.validate_against_sources(durations)
     destination = output or project_dir / "renders" / f"{Path(manifest.name).stem}.mp4"
     destination = _output_path(destination)
+    protected = [Path(source.path) for source in manifest.sources] + [
+        project_path.resolve(strict=True), project_dir / "timeline.json",
+        *(project_dir / reference.path for reference in manifest.analysis),
+    ]
+    if destination.resolve(strict=False) in {path.resolve(strict=False) for path in protected}:
+        raise UnsafePathError("render output collides with source or project metadata")
+    if not dry_run:
+        preflight_new_outputs([destination, destination.with_suffix(".qa.json")], [p for p in protected if p.exists()])
     if not dry_run:
         _require_binary("ffmpeg")
     renderer = FfmpegRenderer()
-    plan = renderer.build_plan(timeline, manifest, output=destination, allow_existing_output=dry_run)
-    result = renderer.render(plan, dry_run=dry_run)
+    with tempfile.TemporaryDirectory(dir="/tmp", prefix="videoos-captions-") as resources:
+        caption_file = None
+        if timeline.captions:
+            filters = CommandRunner().run(["ffmpeg", "-hide_banner", "-filters"]).stdout
+            if not any(len(line.split()) > 1 and line.split()[1] == "subtitles" for line in filters.splitlines()):
+                raise DependencyError("caption burn-in unavailable: FFmpeg subtitles filter is missing; install a libass-enabled FFmpeg or remove caption cues")
+            caption_file = Path(resources) / "captions.ass"
+            caption_file.write_text(to_ass(timeline.captions, CaptionStyle()), encoding="utf-8")
+        plan = renderer.build_plan(timeline, manifest, output=destination, caption_file=caption_file, allow_existing_output=dry_run)
+        result = renderer.render(plan, dry_run=dry_run)
     payload: dict[str, Any] = {
         "project": str(project_path),
         "output": str(result.output) if result.output is not None else str(destination),
@@ -371,6 +408,10 @@ def _render(project_path: Path, *, output: Path | None, dry_run: bool) -> dict[s
             ],
             "video_codec": plan.video_codec,
         }
+    else:
+        report, report_path = _qa_report(destination, timeline, target=manifest.target,
+                                        source_durations=durations, audio_required=plan.has_audio, exclusive_report=True)
+        payload.update(qa_report=str(report_path), qa_passed=report.passed)
     return payload
 
 
@@ -379,27 +420,36 @@ def _qa_report(
     timeline: Timeline | None,
     *,
     target: TargetSpec | None = None,
+    source_durations: Mapping[str, float] | None = None,
+    audio_required: bool | None = None,
+    exclusive_report: bool = False,
 ) -> tuple[QAReport, Path]:
     resolved_output = _existing_file(output, label="output")
-    _require_binary("ffprobe")
-    probe = probe_media(resolved_output, CommandRunner())
+    if resolved_output.name.endswith(".qa.json"):
+        raise UnsafePathError("QA report destination would overwrite the media input")
+    container_checks = []
+    try:
+        _require_binary("ffprobe")
+        probe = probe_media(resolved_output, CommandRunner())
+    except (DependencyError, ExternalCommandError, ValueError, TypeError):
+        probe = MediaProbe(duration=None, video=None, audio=None)
+        container_checks.append(QACheck(name="output.readable_container", status="fail",
+                                       message="container probe failed or ffprobe is unavailable"))
+    else:
+        container_checks.append(QACheck(name="output.readable_container", status="pass",
+                                       message="local ffprobe read the container"))
     expected = QAExpectation(
         duration=timeline.duration_seconds() if timeline is not None else None,
         width=target.width if target is not None else None,
         height=target.height if target is not None else None,
-        audio_required=False,
+        audio_required=audio_required,
+        square_pixels_required=target is not None,
+        **measure_content(resolved_output, probe, CommandRunner()),
     )
-    checks = check_output(resolved_output, expected, probe)
+    checks = container_checks + check_output(resolved_output, expected, probe)
     if timeline is not None:
-        source_durations = {
-            segment.source_id: max(
-                segment.source_end,
-                0.0,
-            )
-            for track in timeline.tracks
-            for segment in track.segments
-        }
-        checks.extend(check_timeline(timeline, source_durations))
+        checks.extend(check_timeline(timeline, source_durations,
+                                     continuous_track_ids=[track.id for track in timeline.tracks if track.kind == "video"]))
     report = QAReport(
         passed=not any(check.status == "fail" for check in checks),
         duration=probe.duration,
@@ -411,7 +461,7 @@ def _qa_report(
         warnings=[check.message for check in checks if check.status == "warn"],
         checks=checks,
     )
-    write_qa_report(resolved_output, report)
+    write_qa_report(resolved_output, report, exclusive=exclusive_report)
     return report, resolved_output.with_suffix(".qa.json")
 
 
@@ -452,7 +502,7 @@ def edit(
     input_path: Path = typer.Argument(..., metavar="INPUT"),  # noqa: B008
     profile: str = typer.Option("generic", "--profile"),
     aspect_ratio: str = typer.Option("16:9", "--aspect-ratio"),
-    resolution: str = typer.Option("1920x1080", "--resolution"),
+    resolution: str | None = typer.Option(None, "--resolution"),
     output: Path | None = typer.Option(None, "--output", metavar="PATH"),  # noqa: B008
     transcribe: bool = typer.Option(False, "--transcribe"),
     no_captions: bool = typer.Option(False, "--no-captions"),
@@ -462,16 +512,19 @@ def edit(
 
     def operation() -> Mapping[str, Any]:
         source = _existing_file(input_path, label="input")
-        target = TargetSpec(aspect_ratio=aspect_ratio, resolution=resolution)
-        artifact = _analyze(source, cache_dir=None, transcribe=transcribe)
+        defaults = {"16:9": "1920x1080", "9:16": "1080x1920", "4:5": "1080x1350", "1:1": "1080x1080"}
+        target = TargetSpec(aspect_ratio=aspect_ratio, resolution=resolution or defaults.get(aspect_ratio, ""))
         project_dir, render_output = _project_directory(source, output)
-        manifest, timeline, analysis_path = _write_project(
+        _preflight_project(project_dir, [source], render_output)
+        artifact = _analyze(source, cache_dir=None, transcribe=transcribe)
+        _manifest, _timeline, analysis_path = _write_project(
             source,
             artifact,
             project_dir=project_dir,
             target=target,
             profile_name=profile,
             captions=not no_captions,
+            render_output=render_output,
         )
         render_payload = _render(project_dir / "project.json", output=render_output, dry_run=dry_run)
         payload: dict[str, Any] = {
@@ -480,17 +533,9 @@ def edit(
             "analysis": str(analysis_path),
             **render_payload,
         }
-        if not dry_run:
-            report, report_path = _qa_report(
-                Path(render_payload["output"]),
-                timeline,
-                target=manifest.target,
-            )
-            payload["qa_report"] = str(report_path)
-            payload["qa_passed"] = report.passed
         return payload
 
-    _run("edit", json_output=False, operation=operation)
+    _run("edit", json_output=False, operation=operation, failed=lambda payload: payload.get("qa_passed") is False)
 
 
 @app.command()
@@ -504,9 +549,11 @@ def shorts(
 
     def operation() -> Mapping[str, Any]:
         source = _existing_file(input_path, label="input")
+        destination = (output_dir or source.parent / f"{source.stem}.shorts").expanduser().resolve(strict=False)
+        preflight_new_outputs([destination / "shorts.json", *(
+            destination / f"short-{index:02d}.videoos" for index in range(1, count + 1)
+        )], [source])
         artifact = _analyze(source, cache_dir=None, transcribe=transcribe)
-        destination = (output_dir or source.parent / f"{source.stem}.shorts").expanduser()
-        destination.mkdir(parents=True, exist_ok=True)
         candidates = score_short_candidates(artifact, count=count)
         metadata = [
             _ShortMetadata(
@@ -520,22 +567,25 @@ def shorts(
             for candidate in candidates
         ]
         metadata_path = destination / "shorts.json"
-        save_model_atomic(metadata_path, _ShortsArtifact(source=str(source), candidates=metadata))
+        destination.mkdir(parents=True, exist_ok=True)
+        save_model_atomic(metadata_path, _ShortsArtifact(source=str(source), candidates=metadata), exclusive=True)
         rendered_projects: list[str] = []
+        qa_passed = True
         if shutil.which("ffmpeg") is not None:
             for index, candidate in enumerate(candidates, start=1):
                 project_dir = destination / f"short-{index:02d}.videoos"
-                project_dir.mkdir(exist_ok=True)
+                _preflight_project(project_dir, [source], project_dir / "renders" / f"{Path(candidate.title).stem}.mp4")
+                project_dir.mkdir()
                 analysis_dir = project_dir / "analysis"
                 analysis_dir.mkdir(exist_ok=True)
                 analysis_path = analysis_dir / f"{artifact.source_hash}.json"
-                save_model_atomic(analysis_path, artifact)
+                save_model_atomic(analysis_path, artifact, exclusive=True)
                 target = TargetSpec(aspect_ratio="9:16", resolution="1080x1920")
                 manifest = ProjectManifest(
                     version="1",
                     project_id=f"{artifact.source_hash}-{index}",
                     name=candidate.title,
-                    sources=[SourceRef(id=artifact.source_hash, path=str(source))],
+                    sources=[SourceRef(id=artifact.source_hash, path=str(source), has_audio=artifact.probe.audio is not None)],
                     target=target,
                     analysis=[_analysis_reference(artifact.source_hash, analysis_path, artifact, project_dir)],
                 )
@@ -554,13 +604,15 @@ def shorts(
                         )
                     ]
                 )
-                save_model_atomic(project_dir / "project.json", manifest)
-                save_model_atomic(project_dir / "timeline.json", timeline)
-                _render(project_dir / "project.json", output=None, dry_run=False)
+                timeline.validate_against_sources({artifact.source_hash: artifact.probe.duration or 0})
+                save_model_atomic(project_dir / "project.json", manifest, exclusive=True)
+                save_model_atomic(project_dir / "timeline.json", timeline, exclusive=True)
+                rendered = _render(project_dir / "project.json", output=None, dry_run=False)
+                qa_passed = qa_passed and rendered["qa_passed"]
                 rendered_projects.append(str(project_dir / "project.json"))
-        return {"metadata": str(metadata_path), "candidates": len(metadata), "rendered_projects": rendered_projects}
+        return {"metadata": str(metadata_path), "candidates": len(metadata), "rendered_projects": rendered_projects, "qa_passed": qa_passed}
 
-    _run("shorts", json_output=False, operation=operation)
+    _run("shorts", json_output=False, operation=operation, failed=lambda payload: payload.get("qa_passed") is False)
 
 
 def _candidate_hook(candidate: ShortCandidate, artifact: AnalysisArtifact) -> str | None:
@@ -582,7 +634,7 @@ def render(
 ) -> None:
     """Render an existing structured project without invoking analysis."""
 
-    _run("render", json_output=False, operation=lambda: _render(project_json, output=output, dry_run=dry_run))
+    _run("render", json_output=False, operation=lambda: _render(project_json, output=output, dry_run=dry_run), failed=lambda payload: payload.get("qa_passed") is False)
 
 
 @app.command()
@@ -595,7 +647,24 @@ def qa(
 
     def operation() -> Mapping[str, Any]:
         timeline = load_model(_existing_file(timeline_path, label="timeline"), Timeline) if timeline_path else None
-        report, report_path = _qa_report(output, timeline)
+        manifest_path = timeline_path.resolve().parent / "project.json" if timeline_path else None
+        durations = None
+        target = None
+        audio_required = None
+        if manifest_path is not None and manifest_path.is_file():
+            project_dir, manifest, _ = _load_project(manifest_path)
+            durations = _verified_source_durations(project_dir, manifest)
+            target = manifest.target
+            used = {seg.source_id for track in timeline.tracks for seg in track.segments}
+            audio_required = any(source.has_audio for source in manifest.sources if source.id in used)
+            report_destination = output.resolve().with_suffix(".qa.json")
+            protected = {Path(source.path).resolve() for source in manifest.sources}
+            protected.update([manifest_path.resolve(), timeline_path.resolve()])
+            protected.update((project_dir / reference.path).resolve() for reference in manifest.analysis)
+            if report_destination.resolve() in protected:
+                raise UnsafePathError("QA report destination collides with source or project metadata")
+        report, report_path = _qa_report(output, timeline, target=target,
+                                        source_durations=durations, audio_required=audio_required)
         payload = report.model_dump(mode="json")
         payload["report"] = str(report_path)
         return payload

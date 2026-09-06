@@ -12,10 +12,10 @@ class RecordingRunner:
 
     def run(self, args: list[str]) -> object:
         self.calls.append(args)
-        return type("Result", (), {"stdout": "", "stderr": ""})()
+        return type("Result", (), {"stdout": f"{args[0]} version test-1\n", "stderr": ""})()
 
     def calls_for(self, executable: str) -> int:
-        return sum(args[0] == executable for args in self.calls)
+        return sum(args[0] == executable and "-version" not in args for args in self.calls)
 
 
 def make_service_with_fake_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AnalysisService:
@@ -83,15 +83,30 @@ def test_reversed_silence_pair_is_omitted_and_records_unclosed_warning(
 
     def run_with_reversed_silence(args: list[str]) -> object:
         runner.calls.append(args)
-        return type("Result", (), {"stdout": "", "stderr": "silence_start: 3\nsilence_end: 2\n"})()
+        return type("Result", (), {"stdout": f"{args[0]} version test-1\n", "stderr": "silence_start: 3\nsilence_end: 2\n"})()
 
     monkeypatch.setattr(runner, "run", run_with_reversed_silence)
     monkeypatch.setattr(service_module, "probe_media", fake_probe)
     monkeypatch.setattr(service_module, "detect_scenes", lambda *args, **kwargs: [])
-
-    artifact = AnalysisService(cache_dir=tmp_path / "cache", runner=runner).analyze(
-        source, config=AnalysisConfig()
-    )
-
+    artifact = AnalysisService(cache_dir=tmp_path / "cache", runner=runner).analyze(source, config=AnalysisConfig())
     assert artifact.silence_regions == []
     assert "ignored unclosed silence interval" in artifact.warnings
+
+
+def test_service_cache_changes_when_installed_tool_changes(tmp_path, monkeypatch):
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"fixture")
+    service = make_service_with_fake_probe(tmp_path, monkeypatch)
+    first = service.analyze(source, config=AnalysisConfig())
+    original = service.runner.run
+
+    def upgraded(args):
+        result = original(args)
+        if args == ["ffprobe", "-version"]:
+            result.stdout = "ffprobe version test-2\n"
+        return result
+
+    monkeypatch.setattr(service.runner, "run", upgraded)
+    second = service.analyze(source, config=AnalysisConfig())
+    assert first.tool_fingerprint != second.tool_fingerprint
+    assert service.runner.calls_for("ffprobe") == 2

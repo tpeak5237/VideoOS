@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from videoos.core.models import TargetSpec, TransformSpec
+from videoos.core.models import AudioAdjustment, TargetSpec, TransformSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +19,7 @@ class RenderOperation:
     source_end: float
     transform: TransformSpec | None
     has_audio: bool
+    audio: AudioAdjustment | None = None
 
     @property
     def duration_seconds(self) -> float:

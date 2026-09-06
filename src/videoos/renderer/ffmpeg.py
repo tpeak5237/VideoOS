@@ -20,7 +20,6 @@ _ALLOWED_VIDEO_CODECS = frozenset({"libx264", "h264_videotoolbox"})
 _ALLOWED_CAPTION_SUFFIXES = frozenset({".ass", ".srt"})
 _MAX_ZOOM_SCALE = 1.25
 _MAX_DIAGNOSTIC_CHARS = 512
-_LOUDNORM_FILTER = "loudnorm=I=-16:TP=-1.5:LRA=11"
 
 
 def _number(value: float) -> str:
@@ -52,9 +51,38 @@ def _video_chain(operation: RenderOperation, target: TargetSpec) -> str:
     ]
     if transform is not None and transform.zoom_scale is not None:
         zoom = min(transform.zoom_scale, _MAX_ZOOM_SCALE)
-        filters.append(
-            f"zoompan=z='min({_number(zoom)},zoom+0.0)':d=1:s={target.width}x{target.height}:fps=30"
-        )
+        filters.extend([
+            f"crop=w='trunc(iw/{_number(zoom)}/2)*2':h='trunc(ih/{_number(zoom)}/2)*2'",
+            f"scale={target.width}:{target.height}",
+        ])
+    filters.append("setsar=1")
+    return ",".join(filters)
+
+
+def _audio_chain(operation: RenderOperation) -> str:
+    duration = operation.duration_seconds
+    if not operation.has_audio:
+        return f"anullsrc=r=48000:cl=stereo,atrim=duration={_number(duration)},asetpts=PTS-STARTPTS"
+    filters = [
+        f"[{operation.input_index}:a:0]atrim=start={_number(operation.source_start)}:end={_number(operation.source_end)}",
+        "asetpts=PTS-STARTPTS",
+    ]
+    adjustment = operation.audio
+    if adjustment:
+        # Normalize first, then apply the explicit gain and envelope so normalization
+        # cannot undo an intentional attenuation or fade.
+        if adjustment.target_lufs is not None:
+            filters.append(f"loudnorm=I={_number(adjustment.target_lufs)}:TP=-1.5:LRA=11")
+        if adjustment.gain_db is not None:
+            filters.append(f"volume={_number(adjustment.gain_db)}dB")
+        for kind, fade in (("in", adjustment.fade_in_seconds), ("out", adjustment.fade_out_seconds)):
+            if fade:
+                if fade > duration:
+                    raise ValueError("audio fade exceeds segment duration")
+                start = 0 if kind == "in" else duration - fade
+                filters.append(f"afade=t={kind}:st={_number(start)}:d={_number(fade)}")
+    filters.extend(["aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo",
+                    f"apad,atrim=duration={_number(duration)}"])
     return ",".join(filters)
 
 
@@ -80,15 +108,11 @@ def build_filter_graph(
         inputs.append(f"[{video_label}]")
         if include_audio:
             audio_label = f"a{index}"
-            chains.append(
-                f"[{operation.input_index}:a]atrim=start={_number(operation.source_start)}:"
-                f"end={_number(operation.source_end)},asetpts=PTS-STARTPTS[{audio_label}]"
-            )
+            chains.append(f"{_audio_chain(operation)}[{audio_label}]")
             inputs.append(f"[{audio_label}]")
 
     if include_audio:
-        chains.append(f"{''.join(inputs)}concat=n={len(operations)}:v=1:a=1[vconcat][anormalized]")
-        chains.append(f"[anormalized]{_LOUDNORM_FILTER}[aout]")
+        chains.append(f"{''.join(inputs)}concat=n={len(operations)}:v=1:a=1[vconcat][aout]")
     else:
         chains.append(f"{''.join(inputs)}concat=n={len(operations)}:v=1:a=0[vconcat]")
 
@@ -120,7 +144,17 @@ def _controlled_caption_file(path: Path) -> Path:
 
 
 def _source_operations(timeline: Timeline, manifest: ProjectManifest) -> tuple[RenderOperation, ...]:
+    if len(timeline.tracks) != 1 or timeline.tracks[0].kind != "video":
+        raise ValueError("P0 renderer supports exactly one continuous video track; standalone/multiple tracks are unsupported")
+    previous_end = 0.0
+    for segment in sorted(timeline.tracks[0].segments, key=lambda item: item.timeline_start):
+        if abs(segment.timeline_start - previous_end) > 1e-7 or segment.duration_seconds <= 0:
+            raise ValueError("P0 renderer does not support timeline gaps, overlaps, or empty segments")
+        previous_end = segment.timeline_end
+    if any(cue.end > previous_end for cue in timeline.captions):
+        raise ValueError("caption range exceeds timeline duration")
     source_paths = {source.id: Path(source.path).resolve(strict=True) for source in manifest.sources}
+    source_audio = {source.id: source.has_audio for source in manifest.sources}
     video_segments = sorted(
         (segment for track in timeline.tracks if track.kind == "video" for segment in track.segments),
         key=lambda segment: (segment.timeline_start, segment.source_id, segment.source_start),
@@ -140,7 +174,8 @@ def _source_operations(timeline: Timeline, manifest: ProjectManifest) -> tuple[R
                 source_start=segment.source_start,
                 source_end=segment.source_end,
                 transform=segment.transform,
-                has_audio=segment.audio is not None,
+                has_audio=source_audio[segment.source_id] is True,
+                audio=segment.audio,
             )
         )
     if not operations:
@@ -201,7 +236,7 @@ class FfmpegRenderer:
     ) -> RenderPlan:
         destination = Path(output)
         operations = _source_operations(timeline, manifest)
-        source_paths = {operation.source_path.resolve(strict=True) for operation in operations}
+        source_paths = {Path(source.path).resolve(strict=True) for source in manifest.sources}
         if destination.resolve(strict=False) in source_paths:
             raise UnsafePathError("render output must not be a source path")
         destination = ensure_output_path(
@@ -210,10 +245,14 @@ class FfmpegRenderer:
             allow_existing=allow_existing_output,
         )
         controlled_caption = _controlled_caption_file(caption_file) if caption_file is not None else None
-        has_audio = all(operation.has_audio for operation in operations)
+        if any(source.has_audio is None for source in manifest.sources):
+            raise ValueError("source audio availability must be verified before rendering")
+        has_audio = any(operation.has_audio for operation in operations)
         warnings: list[str] = []
-        if any(operation.has_audio for operation in operations) and not has_audio:
-            warnings.append("audio omitted because one or more video segments have no audio stream")
+        if has_audio and not all(operation.has_audio for operation in operations):
+            warnings.append("silent audio synthesized for segments without an audio stream")
+        if any(not op.has_audio and op.audio is not None for op in operations):
+            warnings.append("audio adjustments have no effect on sources without audio")
         if timeline.captions and controlled_caption is None:
             warnings.append("caption cues were not burned because no controlled caption file was supplied")
         if any(
@@ -259,7 +298,9 @@ class FfmpegRenderer:
 
         staged_path: Path | None = None
         try:
-            with tempfile.TemporaryDirectory(dir=plan.output.parent, prefix=".videoos-render-") as resources:
+            # A controlled directory keeps untrusted destination punctuation out
+            # of FFmpeg's subtitle filter parser. Media stages stay beside output.
+            with tempfile.TemporaryDirectory(dir="/tmp", prefix="videoos-render-") as resources:
                 runtime_caption: Path | None = None
                 if plan.caption_file is not None:
                     runtime_caption = Path(resources) / f"captions{plan.caption_file.suffix.lower()}"

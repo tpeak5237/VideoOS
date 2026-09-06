@@ -29,7 +29,7 @@ def _finite_evidence(value: float | None) -> float | None:
 
 def check_timeline(
     timeline: Timeline,
-    source_durations: Mapping[str, float],
+    source_durations: Mapping[str, float] | None,
     *,
     continuous_track_ids: Collection[str] = (),
 ) -> list[QACheck]:
@@ -38,6 +38,8 @@ def check_timeline(
     No track is assumed continuous by default so intentional edit gaps remain valid.
     """
     checks: list[QACheck] = []
+    source_context_available = source_durations is not None
+    source_durations = source_durations or {}
     invalid_duration_sources = [
         source_id for source_id, duration in source_durations.items() if not _finite(duration) or duration < 0
     ]
@@ -51,7 +53,8 @@ def check_timeline(
             )
         )
     else:
-        checks.append(_check("timeline.source_durations", "pass", "source durations are finite"))
+        checks.append(_check("timeline.source_durations", "pass" if source_context_available else "warn",
+                             "source durations are finite" if source_context_available else "verified source context unavailable"))
 
     bound_errors: list[str] = []
     overlap_tracks: list[str] = []
@@ -75,8 +78,8 @@ def check_timeline(
     checks.append(
         _check(
             "timeline.source_bounds",
-            "fail" if bound_errors else "pass",
-            "; ".join(bound_errors) if bound_errors else "all source ranges are within bounds",
+            ("fail" if bound_errors else "pass") if source_context_available else "warn",
+            ("; ".join(bound_errors) if bound_errors else "all source ranges are within bounds") if source_context_available else "source-bound verification unavailable without verified source context",
         )
     )
     checks.append(
@@ -157,15 +160,15 @@ def check_output(path: Path, expected: QAExpectation, probe: MediaProbe) -> list
     checks.append(
         _check(
             "output.audio_stream",
-            "pass" if audio_matches else "fail",
-            "audio stream requirement is satisfied" if audio_matches else "required audio stream missing",
+            ("pass" if audio_matches else "fail") if expected.audio_required is not None else "warn",
+            ("audio stream requirement is satisfied" if audio_matches else "required audio stream missing") if expected.audio_required is not None else "source audio expectation unavailable",
         )
     )
 
     for name, detected in (("output.black_frame_start", expected.black_frame_at_start), ("output.black_frame_end", expected.black_frame_at_end)):
-        status: QAStatus = "fail" if detected and not expected.black_frames_allowed else "warn" if detected else "pass"
+        status: QAStatus = "warn" if detected is None else "fail" if detected and not expected.black_frames_allowed else "warn" if detected else "pass"
         checks.append(
-            _check(name, status, "black frame detected" if detected else "no black frame detected")
+            _check(name, status, "black-frame measurement unavailable" if detected is None else "black frame detected" if detected else "no black frame detected", detected=detected)
         )
     peak = expected.audio_peak_dbfs
     peak_exceeds_warning = peak is not None and peak > _AUDIO_PEAK_WARNING_DBFS
@@ -173,9 +176,18 @@ def check_output(path: Path, expected: QAExpectation, probe: MediaProbe) -> list
     checks.append(
         _check(
             "output.audio_peak",
-            "fail" if peak_exceeds_expectation else "warn" if peak_exceeds_warning else "pass",
-            "audio peak exceeds required limit" if peak_exceeds_expectation else "audio peak exceeds advisory limit" if peak_exceeds_warning else "audio peak is acceptable",
+            "warn" if peak is None else "fail" if peak_exceeds_expectation else "warn" if peak_exceeds_warning else "pass",
+            "audio peak measurement unavailable (or no audio stream)" if peak is None else "audio peak exceeds required limit" if peak_exceeds_expectation else "audio peak exceeds advisory limit" if peak_exceeds_warning else "audio peak is acceptable",
             peak_dbfs=peak,
         )
     )
+    if expected.square_pixels_required:
+        sar = video.sample_aspect_ratio if video else None
+        dar = video.display_aspect_ratio if video else None
+        expected_dar = expected.width / expected.height if expected.width and expected.height else None
+        known = sar is not None and dar is not None and expected_dar is not None
+        matches = known and abs(sar - 1) < 1e-6 and abs(dar - expected_dar) < 1e-6
+        checks.append(_check("output.display_ratio", "pass" if matches else "fail" if known else "warn",
+                             "display ratio and square pixels match" if matches else "display ratio mismatch" if known else "display ratio measurement unavailable",
+                             sample_aspect_ratio=sar, display_aspect_ratio=dar, expected=expected_dar))
     return checks

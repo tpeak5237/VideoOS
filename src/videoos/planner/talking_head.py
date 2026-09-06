@@ -105,7 +105,7 @@ def _transform_for_segment(
         zoom_scale = profile.zoom.max_scale
     if not crop and zoom_scale is None:
         return None, previous_zoom_start
-    return TransformSpec(crop_x=0.0 if crop else None, crop_y=0.0 if crop else None, zoom_scale=zoom_scale), (
+    return TransformSpec(zoom_scale=zoom_scale), (
         source_start if zoom_scale is not None else previous_zoom_start
     )
 

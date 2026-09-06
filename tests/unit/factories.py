@@ -100,7 +100,7 @@ def make_project_and_timeline(tmp_path: Path) -> tuple[ProjectManifest, Timeline
         version="1",
         project_id="fixture-project",
         name="Fixture project",
-        sources=[{"id": "main", "path": str(source_path)}],
+        sources=[{"id": "main", "path": str(source_path), "has_audio": False}],
         target=TargetSpec(aspect_ratio="16:9", resolution="1920x1080"),
     )
     timeline = Timeline(

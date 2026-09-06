@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from videoos.analysis.models import MediaProbe, VideoStream
@@ -127,3 +128,65 @@ def test_post_render_qa_checks_the_requested_target_resolution(tmp_path, monkeyp
 
     assert report.passed is False
     assert any(check.name == "output.resolution" and check.status == "fail" for check in report.checks)
+
+
+def test_render_serializes_unicode_captions_to_managed_artifact(project_fixture, monkeypatch):
+    from videoos.core.models import CaptionCue
+    from videoos.renderer.ffmpeg import FfmpegRenderer
+
+    timeline_path = project_fixture / "timeline.json"
+    timeline = load_model(timeline_path, Timeline)
+    timeline.captions = [CaptionCue(start=0, end=1, text="สวัสดี {\\p1}\nworld")]
+    save_model_atomic(timeline_path, timeline)
+    monkeypatch.setattr("videoos.cli.AnalysisService.analyze", lambda *a, **k: pytest.fail("reanalyzed"))
+    monkeypatch.setattr("videoos.cli.CommandRunner.run", lambda *a, **k: type("Result", (), {"stdout": " ... subtitles V->V Render text subtitles\n"})())
+    original = FfmpegRenderer.build_plan
+    captured = []
+
+    def inspect_caption(self, *args, **kwargs):
+        path = kwargs["caption_file"]
+        captured.append((path, path.read_text(encoding="utf-8")))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FfmpegRenderer, "build_plan", inspect_caption)
+    result = runner.invoke(app, ["render", str(project_fixture / "project.json"), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert captured and "สวัสดี" in captured[0][1] and "\\p1" not in captured[0][1]
+    assert not captured[0][0].exists()
+
+
+def test_qa_persists_unreadable_container_failure(tmp_path, monkeypatch):
+    from videoos.core.errors import ExternalCommandError
+
+    output = tmp_path / "bad.mp4"
+    output.write_bytes(b"bad render")
+    monkeypatch.setattr("videoos.cli.probe_media", lambda *a: (_ for _ in ()).throw(ExternalCommandError("bad container")))
+    result = runner.invoke(app, ["qa", str(output), "--json"])
+    assert result.exit_code == 1, result.output
+    assert output.with_suffix(".qa.json").is_file()
+
+
+@pytest.mark.parametrize("occupied", ["render", "qa"])
+def test_edit_occupied_output_rejects_before_analysis_or_metadata(tmp_path, monkeypatch, occupied):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    output = tmp_path / "out.mp4"
+    (output if occupied == "render" else output.with_suffix(".qa.json")).write_bytes(b"user data")
+    monkeypatch.setattr("videoos.cli.AnalysisService.analyze", lambda *a, **k: pytest.fail("analysis started before preflight"))
+    result = runner.invoke(app, ["edit", str(source), "--output", str(output)])
+    assert result.exit_code != 0
+    assert not (tmp_path / "out.videoos").exists()
+
+
+def test_named_portrait_aspect_derives_matching_dimensions(tmp_path, monkeypatch):
+    from tests.unit.factories import make_analysis_fixture
+    from videoos.analysis.cache import sha256_file
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    artifact = make_analysis_fixture(duration=4).model_copy(update={"source_hash": sha256_file(source)})
+    monkeypatch.setattr("videoos.cli._analyze", lambda *a, **k: artifact)
+    result = runner.invoke(app, ["edit", str(source), "--aspect-ratio", "9:16", "--no-captions", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    project = load_model(tmp_path / "source.videoos/project.json", ProjectManifest)
+    assert project.target.resolution == "1080x1920"

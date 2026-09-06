@@ -42,6 +42,7 @@ def test_renderer_explicitly_muxes_staged_part_files_as_mp4(tmp_path: Path):
 def test_renderer_normalizes_complex_audio_within_the_filter_graph(tmp_path: Path):
     """Catches FFmpeg rejecting a simple audio filter after complex audio concatenation."""
     project, timeline = make_project_and_timeline(tmp_path)
+    project.sources[0].has_audio = True
     source = timeline.tracks[0].segments[0]
     timeline = timeline.model_copy(
         update={
@@ -83,7 +84,8 @@ def test_renderer_keeps_zoomed_media_at_thirty_frames_per_second(tmp_path: Path)
 
     plan = FfmpegRenderer().build_plan(timeline, project, output=tmp_path / "out.mp4")
 
-    assert "zoompan=z='min(1.04,zoom+0.0)':d=1:s=1920x1080:fps=30" in plan.filter_graph
+    assert "zoompan" not in plan.filter_graph
+    assert "trunc(iw/1.04/2)*2" in plan.filter_graph
 
 
 def test_subtitle_filter_path_escapes_colon_and_quote(tmp_path: Path):
@@ -109,6 +111,7 @@ def test_dry_run_does_not_create_output(tmp_path: Path):
 
 def test_audio_graph_concatenates_trimmed_segments_and_burns_controlled_captions(tmp_path: Path):
     project, timeline = make_project_and_timeline(tmp_path)
+    project.sources[0].has_audio = True
     source = timeline.tracks[0].segments[0]
     timeline = timeline.model_copy(
         update={
@@ -145,7 +148,7 @@ def test_audio_graph_concatenates_trimmed_segments_and_burns_controlled_captions
 
     assert "atrim=start=0:end=4" in plan.filter_graph
     assert "concat=n=2:v=1:a=1" in plan.filter_graph
-    assert "zoompan=z='min(1.05,zoom+0.0)'" in plan.filter_graph
+    assert "trunc(iw/1.05/2)*2" in plan.filter_graph
     assert "subtitles=filename='" in plan.filter_graph
     assert "\\:" in plan.filter_graph and "\\'" in plan.filter_graph
     assert "[aout]" in plan.argv

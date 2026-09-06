@@ -45,9 +45,24 @@ def ensure_output_path(
     resolved = parent / unresolved.name
     if not _is_within(resolved, project):
         raise UnsafePathError(f"output path escapes project directory: {path}")
-    if resolved.exists() and not allow_existing:
+    if (resolved.exists() or resolved.is_symlink()) and not allow_existing:
         raise UnsafePathError(f"output path already exists: {resolved}")
     return resolved
+
+
+def preflight_new_outputs(destinations: list[Path], sources: list[Path]) -> None:
+    """Check the entire publication set before creating metadata or directories."""
+    canonical_sources = {source.resolve(strict=True) for source in sources}
+    seen: set[Path] = set()
+    for destination in destinations:
+        resolved = destination.resolve(strict=False)
+        if resolved in canonical_sources:
+            raise UnsafePathError("generated destination collides with source media")
+        if resolved in seen:
+            raise UnsafePathError("generated destinations collide")
+        if destination.exists() or destination.is_symlink():
+            raise UnsafePathError(f"generated destination already exists: {destination}")
+        seen.add(resolved)
 
 
 def publish_staged_output(

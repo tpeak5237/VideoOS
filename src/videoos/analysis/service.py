@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import platform
 from collections.abc import Mapping
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Protocol
 
@@ -83,7 +85,22 @@ class AnalysisService:
         """Analyze a strictly resolved local source, reusing its stable artifact when present."""
         source = path.resolve(strict=True)
         config_payload = config.model_dump(mode="json", exclude={"tool_fingerprint"})
-        tool_payload = {"ffmpeg": config.tool_fingerprint}
+        tool_payload = {"python": platform.python_version(), "adapter": "videoos-analysis-v2"}
+        for tool in ("ffmpeg", "ffprobe"):
+            result = self.runner.run([tool, "-version"])
+            identity = result.stdout.strip()
+            if not identity.startswith(f"{tool} version "):
+                raise ExternalCommandError(f"{tool} version identity unavailable")
+            tool_payload[tool] = identity
+        if config.tool_fingerprint:
+            tool_payload["caller"] = config.tool_fingerprint
+        if transcriber is not None:
+            tool_payload["provider_class"] = f"{type(transcriber).__module__}.{type(transcriber).__qualname__}"
+            for package in ("faster-whisper", "ctranslate2", "av", "tokenizers"):
+                try:
+                    tool_payload[package] = version(package)
+                except PackageNotFoundError:
+                    tool_payload[package] = "unavailable"
         source_hash = sha256_file(source)
         analysis_fingerprint = _digest(config_payload)
         tool_fingerprint = _digest(tool_payload)

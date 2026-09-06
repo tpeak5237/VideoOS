@@ -16,6 +16,8 @@ class VideoStream:
     height: int | None
     frame_rate: float | None
     rotation: int | None
+    sample_aspect_ratio: float | None = None
+    display_aspect_ratio: float | None = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +145,7 @@ class AnalysisConfig(AnalysisModel):
     minimum_silence_duration: float = 0.3
     scene_threshold: float = 0.35
     provider_fingerprint: str = "none"
-    tool_fingerprint: str = "ffmpeg-local-v1"
+    tool_fingerprint: str | None = None
 
     @field_validator("silence_threshold_db", "minimum_silence_duration", "scene_threshold")
     @classmethod
