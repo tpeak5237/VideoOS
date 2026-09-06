@@ -69,13 +69,37 @@ def test_timeline_reports_source_bounds_overlap_and_continuous_track_gap():
         ]
     )
 
-    checks = check_timeline(timeline, {"main": 10})
+    checks = check_timeline(timeline, {"main": 10}, continuous_track_ids={"video-gap"})
 
     assert {check.name for check in checks if check.status == "fail"} >= {
         "timeline.source_bounds",
         "timeline.track_overlaps",
         "timeline.track_gaps",
     }
+
+
+def test_timeline_reports_gaps_only_for_explicitly_continuous_tracks():
+    """Catches failing intentional video-track gaps without a continuity expectation."""
+    timeline = Timeline(
+        tracks=[
+            Track(
+                id="optional-b-roll",
+                kind="video",
+                segments=[
+                    SourceSegment(source_id="main", source_start=0, source_end=1, timeline_start=0),
+                    SourceSegment(source_id="main", source_start=1, source_end=2, timeline_start=3),
+                ],
+            )
+        ]
+    )
+
+    optional_checks = check_timeline(timeline, {"main": 10})
+    continuous_checks = check_timeline(
+        timeline, {"main": 10}, continuous_track_ids={"optional-b-roll"}
+    )
+
+    assert next(check for check in optional_checks if check.name == "timeline.track_gaps").status == "pass"
+    assert next(check for check in continuous_checks if check.name == "timeline.track_gaps").status == "fail"
 
 
 def test_output_reports_missing_streams_and_nonfinite_duration(tmp_path: Path):
@@ -131,6 +155,29 @@ def test_output_warns_for_black_frames_and_audio_peak_without_failing(tmp_path: 
     assert all(check.status != "fail" for check in checks)
 
 
+def test_output_escalates_black_frames_and_audio_peak_when_required(tmp_path: Path):
+    """Catches ignoring explicit black-frame and peak limits in an output expectation."""
+    output = tmp_path / "out.mp4"
+    output.write_bytes(b"rendered")
+
+    checks = check_output(
+        output,
+        QAExpectation(
+            duration=4.0,
+            black_frame_at_start=True,
+            black_frames_allowed=False,
+            audio_peak_dbfs=-0.5,
+            maximum_audio_peak_dbfs=-1.0,
+        ),
+        make_media_probe(),
+    )
+
+    assert {check.name for check in checks if check.status == "fail"} >= {
+        "output.black_frame_start",
+        "output.audio_peak",
+    }
+
+
 def test_report_is_not_passed_when_an_invariant_fails():
     """Catches caller-provided pass state overriding failed invariant checks."""
     report = QAReport(
@@ -139,6 +186,17 @@ def test_report_is_not_passed_when_an_invariant_fails():
     )
 
     assert report.passed is False
+
+
+def test_report_serialization_recomputes_passed_after_a_check_is_appended(tmp_path: Path):
+    """Catches serializing a stale pass state after checks are mutated in place."""
+    report = QAReport(passed=True)
+    report.checks.append(QACheck(name="output.exists", status="fail", message="output is missing"))
+    destination = tmp_path / "output.qa.json"
+
+    write_qa_report(destination, report)
+
+    assert json.loads(destination.read_text(encoding="utf-8"))["passed"] is False
 
 
 def test_report_uses_stable_sibling_qa_json_path(tmp_path: Path):

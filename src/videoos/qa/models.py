@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 QAStatus = Literal["pass", "warn", "fail"]
 
@@ -85,3 +92,10 @@ class QAReport(QAModel):
         if any(check.status == "fail" for check in self.checks):
             self.passed = False
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_current_checks(self, handler: Any) -> dict[str, Any]:
+        """Serialize a pass state derived from the current mutable checks list."""
+        payload = handler(self)
+        payload["passed"] = not any(check.status == "fail" for check in self.checks)
+        return payload

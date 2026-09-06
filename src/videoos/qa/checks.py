@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
 from videoos.analysis.models import MediaProbe
@@ -27,8 +27,16 @@ def _finite_evidence(value: float | None) -> float | None:
     return value if _finite(value) else None
 
 
-def check_timeline(timeline: Timeline, source_durations: Mapping[str, float]) -> list[QACheck]:
-    """Report source bounds, ordering, continuous-video gaps, and caption bounds."""
+def check_timeline(
+    timeline: Timeline,
+    source_durations: Mapping[str, float],
+    *,
+    continuous_track_ids: Collection[str] = (),
+) -> list[QACheck]:
+    """Report timeline invariants; gaps fail only for explicitly continuous tracks.
+
+    No track is assumed continuous by default so intentional edit gaps remain valid.
+    """
     checks: list[QACheck] = []
     invalid_duration_sources = [
         source_id for source_id, duration in source_durations.items() if not _finite(duration) or duration < 0
@@ -60,7 +68,7 @@ def check_timeline(timeline: Timeline, source_durations: Mapping[str, float]) ->
                 bound_errors.append(f"source range exceeds duration {segment.source_id}")
             if segment.timeline_start < previous_end:
                 overlap_tracks.append(track.id)
-            elif track.kind == "video" and segment.timeline_start > previous_end:
+            elif track.id in continuous_track_ids and segment.timeline_start > previous_end:
                 gap_tracks.append(track.id)
             previous_end = max(previous_end, segment.timeline_end)
 
@@ -82,7 +90,7 @@ def check_timeline(timeline: Timeline, source_durations: Mapping[str, float]) ->
         _check(
             "timeline.track_gaps",
             "fail" if gap_tracks else "pass",
-            f"gaps in continuous video tracks: {', '.join(sorted(set(gap_tracks)))}" if gap_tracks else "continuous video tracks have no gaps",
+            f"gaps in continuous tracks: {', '.join(sorted(set(gap_tracks)))}" if gap_tracks else "continuous tracks have no gaps",
         )
     )
 
