@@ -35,13 +35,22 @@ def test_timeline_edit_rerenders_without_analysis_or_source_mutation(synthetic_v
 
     monkeypatch.setattr("videoos.cli.AnalysisService.analyze", lambda *args, **kwargs: pytest.fail("reanalyzed"))
     monkeypatch.setattr("videoos.cli.FfmpegRenderer.build_plan", record_plan)
+    original_output = next((project_dir / "renders").glob("*.mp4"))
+    original_output_bytes = original_output.read_bytes()
     render_result = run_videoos_render(project_path)
     rerender_output = project_dir / "renders" / "timeline-rerender.mp4"
+    rerender_output_bytes = rerender_output.read_bytes()
+    occupied_result = CliRunner().invoke(
+        app, ["render", str(project_path), "--output", str(rerender_output)]
+    )
     qa_result = CliRunner().invoke(
         app, ["qa", str(rerender_output), "--timeline", str(timeline_path), "--json"]
     )
 
     assert render_result.exit_code == 0, render_result.output
+    assert occupied_result.exit_code != 0, occupied_result.output
+    assert rerender_output.read_bytes() == rerender_output_bytes
+    assert original_output.read_bytes() == original_output_bytes
     assert qa_result.exit_code == 0, qa_result.output
     assert json.loads(qa_result.output)["passed"] is True
     assert planned_graphs and "zoompan=z='min(1.04,zoom+0.0)'" in planned_graphs[0]

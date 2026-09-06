@@ -5,6 +5,17 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+_DIAGNOSTIC_STREAM_LIMIT = 512
+
+
+def _diagnostic_excerpt(value: str | bytes | None) -> str:
+    """Return a decoded, bounded subprocess stream excerpt for fixture failures."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return value[:_DIAGNOSTIC_STREAM_LIMIT]
+
 
 def make_fixture(output: Path) -> Path:
     """Create a four-second 640x360 H.264/AAC MP4 with one-second silent bookends."""
@@ -53,7 +64,12 @@ def make_fixture(output: Path) -> Path:
     try:
         subprocess.run(command, check=True, capture_output=True, text=True, shell=False)
     except subprocess.CalledProcessError as error:
-        raise RuntimeError(f"ffmpeg fixture generation failed: {error.stderr[:512]}") from error
+        stdout_excerpt = _diagnostic_excerpt(error.stdout)
+        stderr_excerpt = _diagnostic_excerpt(error.stderr)
+        raise RuntimeError(
+            "ffmpeg fixture generation failed "
+            f"(stdout excerpt: {stdout_excerpt!r}; stderr excerpt: {stderr_excerpt!r})"
+        ) from error
     if not destination.is_file() or destination.stat().st_size == 0:
         raise RuntimeError("ffmpeg fixture generation did not create a non-empty output")
     return destination
