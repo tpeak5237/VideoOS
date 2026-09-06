@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from tests.unit.factories import make_project_and_timeline
 from videoos.core.io import load_model, save_model_atomic
-from videoos.core.models import ProjectManifest, Timeline
+from videoos.core.models import Evidence, ProjectManifest, Timeline
 
 
 def test_models_round_trip_as_utf8_json(tmp_path: Path):
@@ -48,3 +48,21 @@ def test_load_rejects_future_versions(tmp_path: Path):
 
     with pytest.raises(ValidationError, match="version"):
         load_model(path, Timeline)
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_load_rejects_non_standard_json_constants(tmp_path: Path, constant: str):
+    path = tmp_path / "timeline.json"
+    path.write_text(f'{{"version": {constant}, "tracks": []}}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-standard JSON constant"):
+        load_model(path, Timeline)
+
+
+def test_atomic_save_rejects_non_finite_values_even_if_validation_is_bypassed(tmp_path: Path):
+    unsafe = Evidence.model_construct(
+        action="remove", reason="silence", confidence=float("nan"), start=0, end=1
+    )
+
+    with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
+        save_model_atomic(tmp_path / "evidence.json", unsafe)

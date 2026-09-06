@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
 import re
 from collections.abc import Mapping
 from typing import Literal
@@ -19,6 +21,21 @@ class SchemaModel(BaseModel):
 
 def _timestamp(value: float, field_name: str) -> float:
     return finite_non_negative(value, field_name)
+
+
+def _finite_in_range(value: float, field_name: str, minimum: float, maximum: float) -> float:
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise ValueError(f"{field_name} must be finite")
+    if not minimum <= numeric <= maximum:
+        raise ValueError(f"{field_name} must be between {minimum} and {maximum}")
+    return numeric
+
+
+def _sha256(value: str, field_name: str) -> str:
+    if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError(f"{field_name} must be a lowercase SHA-256 digest")
+    return value
 
 
 class TargetSpec(SchemaModel):
@@ -64,7 +81,19 @@ class SourceRef(SchemaModel):
 class AnalysisRef(SchemaModel):
     source_id: str
     path: str
-    cache_key: str | None = None
+    source_sha256: str
+    analysis_config_fingerprint: str
+    tool_fingerprint: str
+
+    @field_validator("source_sha256", "analysis_config_fingerprint", "tool_fingerprint")
+    @classmethod
+    def validate_fingerprint(cls, value: str, info: object) -> str:
+        return _sha256(value, getattr(info, "field_name", "fingerprint"))
+
+    @property
+    def cache_identity(self) -> str:
+        identity = f"{self.source_sha256}\0{self.analysis_config_fingerprint}\0{self.tool_fingerprint}"
+        return hashlib.sha256(identity.encode("ascii")).hexdigest()
 
 
 class ProjectManifest(SchemaModel):
@@ -87,6 +116,11 @@ class ProjectManifest(SchemaModel):
         source_ids = [source.id for source in self.sources]
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("source ids must be unique")
+        unknown_analysis_sources = {
+            reference.source_id for reference in self.analysis if reference.source_id not in source_ids
+        }
+        if unknown_analysis_sources:
+            raise ValueError("analysis reference has an unknown source_id")
         return self
 
 
@@ -119,6 +153,20 @@ class AudioAdjustment(SchemaModel):
     fade_in_seconds: float | None = None
     fade_out_seconds: float | None = None
 
+    @field_validator("gain_db")
+    @classmethod
+    def validate_gain_db(cls, value: float | None) -> float | None:
+        if value is None:
+            return value
+        return _finite_in_range(value, "gain_db", -60, 24)
+
+    @field_validator("target_lufs")
+    @classmethod
+    def validate_target_lufs(cls, value: float | None) -> float | None:
+        if value is None:
+            return value
+        return _finite_in_range(value, "target_lufs", -70, 0)
+
     @field_validator("fade_in_seconds", "fade_out_seconds")
     @classmethod
     def validate_fades(cls, value: float | None, info: object) -> float | None:
@@ -127,12 +175,34 @@ class AudioAdjustment(SchemaModel):
         return _timestamp(value, getattr(info, "field_name", "fade"))
 
 
+class DecisionParameters(SchemaModel):
+    silence_seconds: float | None = None
+    scene_index: int | None = Field(default=None, ge=0)
+
+    @field_validator("silence_seconds")
+    @classmethod
+    def validate_silence_seconds(cls, value: float | None) -> float | None:
+        if value is None:
+            return value
+        return _timestamp(value, "silence_seconds")
+
+
+EvidenceAction = Literal[
+    "keep", "remove", "trim", "reframe", "zoom", "normalize_audio", "caption"
+]
+EvidenceReason = Literal[
+    "manual", "silence", "scene_boundary", "speech", "framing", "loudness", "transcript", "heuristic_window"
+]
+SegmentRole = Literal["primary", "b_roll", "cutaway", "overlay", "voiceover"]
+
+
 class Evidence(SchemaModel):
-    action: str
-    reason: str
+    action: EvidenceAction
+    reason: EvidenceReason
     confidence: float | None = None
     start: float
     end: float
+    parameters: DecisionParameters | None = None
 
     @field_validator("start", "end")
     @classmethod
@@ -161,7 +231,7 @@ class SourceSegment(SchemaModel):
     source_start: float = 0
     source_end: float
     timeline_start: float = 0
-    role: str | None = None
+    role: SegmentRole | None = None
     transform: TransformSpec | None = None
     audio: AudioAdjustment | None = None
     evidence: Evidence | None = None

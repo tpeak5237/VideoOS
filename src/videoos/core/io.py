@@ -10,11 +10,18 @@ from pathlib import Path
 from pydantic import BaseModel
 
 
+def _reject_non_standard_json_constant(_: str) -> None:
+    raise ValueError("non-standard JSON constant")
+
+
 def load_model[T: BaseModel](path: Path, model_type: type[T]) -> T:
     """Load a validated model without reflecting untrusted file contents in errors."""
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            parse_constant=_reject_non_standard_json_constant,
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise ValueError(f"unable to read structured model at {path}: {exc}") from exc
     return model_type.model_validate(payload)
 
@@ -28,7 +35,13 @@ def save_model_atomic(path: Path, model: BaseModel) -> None:
             mode="w", encoding="utf-8", dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False
         ) as temporary:
             temporary_path = Path(temporary.name)
-            json.dump(model.model_dump(mode="json"), temporary, ensure_ascii=False, indent=2)
+            json.dump(
+                model.model_dump(mode="json"),
+                temporary,
+                allow_nan=False,
+                ensure_ascii=False,
+                indent=2,
+            )
             temporary.write("\n")
             temporary.flush()
             os.fsync(temporary.fileno())
