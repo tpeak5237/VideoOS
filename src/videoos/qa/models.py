@@ -97,5 +97,5 @@ class QAReport(QAModel):
     def serialize_current_checks(self, handler: Any) -> dict[str, Any]:
         """Serialize a pass state derived from the current mutable checks list."""
         payload = handler(self)
-        payload["passed"] = not any(check.status == "fail" for check in self.checks)
+        payload["passed"] = self.passed and not any(check.status == "fail" for check in self.checks)
         return payload

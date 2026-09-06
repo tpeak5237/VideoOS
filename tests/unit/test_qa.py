@@ -199,6 +199,16 @@ def test_report_serialization_recomputes_passed_after_a_check_is_appended(tmp_pa
     assert json.loads(destination.read_text(encoding="utf-8"))["passed"] is False
 
 
+def test_report_serialization_preserves_explicit_false_without_failed_checks(tmp_path: Path):
+    """Catches serializer promotion of an explicitly failed report without invariant checks."""
+    report = QAReport(passed=False)
+    destination = tmp_path / "output.qa.json"
+
+    write_qa_report(destination, report)
+
+    assert json.loads(destination.read_text(encoding="utf-8"))["passed"] is False
+
+
 def test_report_uses_stable_sibling_qa_json_path(tmp_path: Path):
     """Catches nondeterministic output-report paths and key ordering."""
     report = QAReport(passed=True, duration=4.0, resolution="1080x1920")
