@@ -12,12 +12,47 @@ from videoos.analysis.models import (
     VideoStream,
 )
 from videoos.core.models import (
+    CaptionCue,
     ProjectManifest,
     SourceSegment,
     TargetSpec,
     Timeline,
     Track,
 )
+
+
+def make_timeline_with_caption(
+    *, start: float, end: float, cue_start: float, cue_end: float
+) -> Timeline:
+    """Build a bounded single-track timeline with one requested caption cue."""
+    return Timeline(
+        tracks=[
+            Track(
+                id="video",
+                kind="video",
+                segments=[
+                    SourceSegment(
+                        source_id="main",
+                        source_start=start,
+                        source_end=end,
+                        timeline_start=start,
+                    )
+                ],
+            )
+        ],
+        captions=[CaptionCue(start=cue_start, end=cue_end, text="Caption")],
+    )
+
+
+def make_media_probe(*, duration: float = 4.0, audio: bool = True) -> MediaProbe:
+    """Return a deterministic 1080x1920 output probe for QA tests."""
+    return MediaProbe(
+        duration=duration,
+        video=VideoStream(
+            codec_name="h264", width=1080, height=1920, frame_rate=30.0, rotation=0
+        ),
+        audio=AudioStream(codec_name="aac", sample_rate=48_000, channels=2) if audio else None,
+    )
 
 
 def make_analysis_fixture(
