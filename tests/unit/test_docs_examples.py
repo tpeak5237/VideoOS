@@ -21,3 +21,18 @@ def test_readme_contains_first_video_commands():
     assert "videoos doctor" in readme
     assert "videoos analyze" in readme
     assert "videoos edit" in readme
+
+
+def test_rendering_docs_describe_default_and_explicit_output_boundaries():
+    rendering = Path("docs/RENDERING.md").read_text(encoding="utf-8")
+
+    assert "Default outputs stay in the project `renders/` directory" in rendering
+    assert "explicit `--output` paths use their own validated parent directory" in rendering
+    assert "not constrained to the project directory" in rendering
+
+
+def test_license_audit_covers_declared_setuptools_build_dependency():
+    audit = Path("docs/LICENSE_AUDIT.md").read_text(encoding="utf-8")
+
+    assert "setuptools / MIT" in audit
+    assert "https://github.com/pypa/setuptools" in audit

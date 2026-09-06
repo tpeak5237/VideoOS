@@ -1,9 +1,10 @@
 # License audit
 
-Audit date: 2026-09-06. This records direct declarations in `pyproject.toml`, not a complete transitive SBOM. Licenses were checked against package metadata and the linked official project sources on this date; verify the exact resolved versions and FFmpeg build before redistribution.
+Audit date: 2026-09-06. This records direct project and build-system declarations in `pyproject.toml`, not a complete transitive SBOM. Licenses were checked against package metadata and the linked official project sources on this date; verify the exact resolved versions and FFmpeg build before redistribution.
 
 | Scope | Dependency / license | Purpose | Official source | Redistribution consideration |
 | --- | --- | --- | --- | --- |
+| Build system | setuptools / MIT | build backend | https://github.com/pypa/setuptools | Preserve applicable MIT notice when redistributing a bundled build tool. |
 | Runtime | Pydantic / MIT | validated schemas | https://github.com/pydantic/pydantic | Preserve applicable MIT notice when redistributing. |
 | Runtime | PyYAML / MIT | profile parsing | https://pyyaml.org/ | Preserve applicable MIT notice. |
 | Runtime | Rich / MIT | terminal tables | https://github.com/Textualize/rich | Preserve applicable MIT notice. |
