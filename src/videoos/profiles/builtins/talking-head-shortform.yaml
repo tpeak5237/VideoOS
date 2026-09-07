@@ -1,0 +1,16 @@
+name: talking-head-shortform
+silence:
+  remove: true
+  max_pause_ms: 350
+captions:
+  enabled: true
+  max_words_per_line: 4
+reframe:
+  subject_tracking: true
+zoom:
+  enabled: true
+  min_interval_seconds: 8
+  max_scale: 1.05
+audio:
+  speech_target_lufs: -16
+  music_under_speech_lufs: -28

@@ -1,0 +1,16 @@
+name: generic
+silence:
+  remove: false
+  max_pause_ms: 500
+captions:
+  enabled: true
+  max_words_per_line: 5
+reframe:
+  subject_tracking: false
+zoom:
+  enabled: false
+  min_interval_seconds: 12
+  max_scale: 1.04
+audio:
+  speech_target_lufs: -16
+  music_under_speech_lufs: -28

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"videoos.profiles" = ["builtins/*.yaml"]
+
+[project]
+name = "videoos"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.7,<3",
+  "pyyaml>=6.0,<7",
+  "rich>=13.7,<15",
+  "typer>=0.12,<1",
+]
+
+[project.optional-dependencies]
+speech = ["faster-whisper>=1.0,<2"]
+scenes = ["scenedetect[opencv]>=0.6,<1"]
+dev = ["pytest>=8,<9", "pytest-cov>=5,<7", "ruff>=0.6,<1"]
+
+[project.scripts]
+videoos = "videoos.cli:app"
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: exercises local FFmpeg/ffprobe-backed media workflows",
+]

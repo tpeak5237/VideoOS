@@ -1,0 +1,10 @@
+{
+  "version": "1",
+  "project_id": "example-talking-head",
+  "name": "talking-head-example",
+  "sources": [
+    {"id": "main", "path": "/absolute/path/to/local-input.mp4"}
+  ],
+  "target": {"aspect_ratio": "9:16", "resolution": "1080x1920"},
+  "analysis": []
+}
