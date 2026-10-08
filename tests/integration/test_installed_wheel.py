@@ -16,11 +16,26 @@ def test_installed_wheel_profiles_and_entrypoint(tmp_path):
     build = tmp_path / "build"
     build.mkdir()
     shutil.copyfile(repo / "pyproject.toml", build / "pyproject.toml")
+    shutil.copyfile(repo / "README.md", build / "README.md")
     shutil.copytree(repo / "src", build / "src", ignore=shutil.ignore_patterns("__pycache__", "*.egg-info"))
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     subprocess.run([sys.executable, "-c", "from setuptools.build_meta import build_wheel; build_wheel('dist')"], cwd=build, env=env, check=True, capture_output=True, timeout=60)
     installed = tmp_path / "installed"
-    subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--offline", "--target", str(installed), str(next((build / "dist").glob("*.whl")))], cwd=tmp_path, env=env, check=True, capture_output=True, timeout=60)
+    # Hashed installation caches package archives without necessarily caching the
+    # unhashed registry metadata required by a new dependency resolution. Reuse
+    # the audited lock offline, then install only the wheel being tested.
+    dependencies = subprocess.run(
+        ["uv", "pip", "sync", "--python", sys.executable, "--offline",
+         "--require-hashes", "--target", str(installed), str(repo / "requirements-dev.lock")],
+        cwd=tmp_path, env=env, capture_output=True, text=True, check=False, timeout=60,
+    )
+    assert dependencies.returncode == 0, dependencies.stdout + dependencies.stderr
+    wheel = subprocess.run(
+        ["uv", "pip", "install", "--python", sys.executable, "--offline", "--no-deps",
+         "--target", str(installed), str(next((build / "dist").glob("*.whl")))],
+        cwd=tmp_path, env=env, capture_output=True, text=True, check=False, timeout=60,
+    )
+    assert wheel.returncode == 0, wheel.stdout + wheel.stderr
     env["PYTHONPATH"] = str(installed)
     smoke = """
 import videoos

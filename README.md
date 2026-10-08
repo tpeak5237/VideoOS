@@ -51,3 +51,14 @@ Faceless production, advertising generation, asset indexing, remote vision/audio
 ## Safety boundary
 
 VideoOS executes local tools with argument arrays (`shell=False`), accepts structured inputs through validated schemas, writes atomically, confines renderer staging/output paths, and sends no telemetry. Review source-media licensing and FFmpeg redistribution obligations before distributing a bundled product; see [license audit](docs/LICENSE_AUDIT.md).
+
+
+## Development and verification
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for a clean environment and the exact unit/CLI, FFmpeg integration, Ruff and Python package build commands. [GitHub CI](.github/workflows/ci.yml) provisions Python 3.12, uv, FFmpeg and fonts and exercises the installed wheel as well as source imports. CI configuration is not evidence that a hosted run has passed.
+
+[Current local verification](docs/MAINTENANCE_VERIFICATION.md), [security boundaries](SECURITY.md) and [maintenance decisions](docs/DECISIONS.md) explain local artifact handling, optional capabilities and the distinction between local tests and release proof.
+
+## Project license status
+
+This publicly visible repository currently has **no project-level license**. It must not be described as legally open source solely because its source is public. Reuse and redistribution rights require a separate ownership/license decision. Dependency licenses and media/FFmpeg obligations are recorded in [the license audit](docs/LICENSE_AUDIT.md); they do not grant a license to VideoOS itself.
