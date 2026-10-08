@@ -20,6 +20,8 @@ The original pytest 8.4.2 development dependency had PYSEC-2026-1845. The dev bo
 
 These tests used generated synthetic media. No original or user media was uploaded or changed. Optional faster-whisper, OpenCV, MediaPipe and Blender were unavailable; this run does not establish their behavior. The doctor observed VideoToolbox availability, which does not prove a successful hardware encode.
 
-The new CI workflow declares Ubuntu/Python 3.12, uv, FFmpeg and fonts. It has not been run on GitHub as part of this local checkpoint. No branch was committed/pushed, PR opened, package registry published, or deployment performed by this checkpoint. Root release review handles source scanning and publication separately.
+The first GitHub CI run on PR #2 passed the lock audit, lint and 162 unit/CLI tests but failed the offline installed-wheel integration: the unhashed resolver lacked registry metadata in its fresh cache. The test now installs the hashed lock offline into its isolated target and installs the wheel with `--no-deps`, while retaining package-resource, entrypoint and real-render assertions. It also includes the README referenced by package metadata and reports installation stderr on failure.
+
+A new temporary virtual environment and an initially empty uv cache were populated using only the hashed lock; all 181 tests passed there. CI reruns independently on Ubuntu/Python 3.12 with FFmpeg and fonts. See [PR #2](https://github.com/tpeak5237/VideoOS/pull/2) for the actual current check result. No package registry or application deployment is performed.
 
 VideoOS still has no project-level license. Passing tests or public visibility do not resolve redistribution rights or establish production readiness. Existing historical verification documentation is retained separately.

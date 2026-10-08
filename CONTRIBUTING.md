@@ -4,7 +4,7 @@ Read [AGENTS.md](AGENTS.md), [architecture](docs/ARCHITECTURE.md), [project form
 
 ## Reproduce verification
 
-Use Python 3.12+, FFmpeg/ffprobe and `uv`. The installed-wheel integration test invokes `uv` offline; installing with uv first warms the dependency cache used by that test.
+Use Python 3.12+, FFmpeg/ffprobe and `uv`. The installed-wheel integration test invokes `uv` offline. Syncing the hashed lock first supplies its package archives; the test installs those exact locked dependencies into an isolated target before installing the wheel without re-resolving dependencies.
 
 ```sh
 uv venv --python 3.12 .venv

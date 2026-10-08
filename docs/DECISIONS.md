@@ -2,7 +2,7 @@
 
 ## Verify the actual local media boundary
 
-CI provisions Python 3.12, uv, FFmpeg/ffprobe and local fonts, then runs unit/CLI and real media integration tests. Tests must exercise the installed wheel as well as source imports so packaged profiles and the command entrypoint cannot be accidentally omitted. Installing dependencies through uv supplies the cache for the existing offline wheel installation test.
+CI provisions Python 3.12, uv, FFmpeg/ffprobe and local fonts, then runs unit/CLI and real media integration tests. Tests must exercise the installed wheel as well as source imports so packaged profiles and the command entrypoint cannot be accidentally omitted. The installed-wheel test syncs the hashed lock into its isolated target offline, then installs the wheel with `--no-deps`. This reuses audited package archives without requiring stale, unhashed registry metadata.
 
 ## Lock verification dependencies
 
