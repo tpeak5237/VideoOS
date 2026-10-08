@@ -1,5 +1,11 @@
 # License audit
 
+## Project-level status
+
+As inspected on October 8, 2026, this public repository has no project-level LICENSE file or declared project license. Public source visibility is not an open-source license. A maintainer ownership and licensing decision is required before claiming open-source reuse/redistribution rights. The dependency inventory below does not license VideoOS itself.
+
+## Dependency inventory
+
 Audit date: 2026-09-06. This records direct project and build-system declarations in `pyproject.toml`, not a complete transitive SBOM. Licenses were checked against package metadata and the linked official project sources on this date; verify the exact resolved versions and FFmpeg build before redistribution.
 
 | Scope | Dependency / license | Purpose | Official source | Redistribution consideration |

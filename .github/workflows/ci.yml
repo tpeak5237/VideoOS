@@ -1,0 +1,48 @@
+name: Local pipeline checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - name: Install local media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg fonts-dejavu-core
+          ffmpeg -version
+          ffprobe -version
+      - name: Install project and verification dependencies
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip sync --python .venv/bin/python --require-hashes requirements-dev.lock
+          uv pip install --python .venv/bin/python --no-deps --no-build-isolation .
+      - name: Locked dependency audit
+        run: uvx --python 3.12 pip-audit --require-hashes -r requirements-dev.lock
+      - name: Lint
+        run: .venv/bin/ruff check src tests
+      - name: Unit and CLI tests
+        run: PYTHONPATH=src .venv/bin/python -m pytest tests/unit tests/cli -q
+      - name: FFmpeg and installed-wheel integration
+        run: PYTHONPATH=src .venv/bin/python -m pytest tests/integration -q
+      - name: Build source and wheel distributions
+        run: .venv/bin/python -m build --no-isolation
+      - name: Installed command diagnostic
+        run: .venv/bin/videoos doctor --json
+      - name: Whitespace check
+        run: git diff --check
+      - name: Package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: videoos-python-distributions
+          path: dist/
+          retention-days: 7
